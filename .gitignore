@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+error_log.txt
+.streamlit/secrets.toml
+.claude/

@@ -1,0 +1,6 @@
+streamlit>=1.40
+pandas
+pillow
+pymupdf
+gspread
+google-auth
