@@ -251,10 +251,12 @@ if "match_step" not in st.session_state:
 if "match_product" not in st.session_state:
     st.session_state.match_product = None
 
-st.set_page_config(page_title="주문 업체 매칭", layout="centered")
+_WIDE_PAGES = ("settings", "app_settings")
+st.set_page_config(page_title="주문 업체 매칭", layout="wide" if st.session_state.page in _WIDE_PAGES else "centered")
 
 _ACCENT = st.session_state.config["primary_color"]
 _RADIUS = "15px" if st.session_state.config["button_style"] == "round" else "4px"
+_MAX_WIDTH = "1100px" if st.session_state.page in _WIDE_PAGES else "640px"
 
 st.html(f"""
     <link rel="stylesheet" as="style" crossorigin
@@ -265,7 +267,8 @@ st.html(f"""
         --mute:#8a8a8a; --tint:#f7f7f7; --radius:{_RADIUS}; --accent:{_ACCENT};
     }}
     html, body, [class*="css"] {{ font-family:'Pretendard Variable',Pretendard,system-ui,sans-serif; }}
-    .block-container {{ max-width:640px; padding-top:2.5rem; padding-bottom:5rem; }}
+    .block-container {{ max-width:{_MAX_WIDTH}; padding-top:2.5rem; padding-bottom:5rem; }}
+    h1, h2, h3 {{ letter-spacing:-0.02em; }}
 
     /* ── 스텝 인디케이터 ── */
     .steps {{ display:flex; align-items:center; gap:0; margin-bottom:28px; font-variant-numeric:tabular-nums; }}
@@ -319,6 +322,23 @@ st.html(f"""
     div[data-testid="stPills"] button[aria-checked="true"] {{
         background:var(--ink) !important; border-color:var(--ink) !important; color:#fff !important;
     }}
+
+    /* 환경 설정 톱니바퀴 아이콘 (마법사 우측 상단) */
+    [class*="st-key-gear_wrap"] button {{
+        border-color:var(--hair); background:var(--paper); padding:0; width:38px; height:38px;
+        font-size:16px; float:right;
+    }}
+    [class*="st-key-gear_wrap"] button:hover {{ border-color:var(--ink); }}
+
+    /* ── 탭 · 익스팬더 · 표 : 모던 톤으로 통일 ── */
+    button[data-baseweb="tab"] {{ font-weight:700; font-size:14px; }}
+    div[data-baseweb="tab-highlight"] {{ background-color:var(--ink) !important; height:2px !important; }}
+    div[data-baseweb="tab-border"] {{ background-color:var(--hair) !important; }}
+    [data-testid="stExpander"] {{ border:1px solid var(--hair); border-radius:var(--radius); }}
+    [data-testid="stExpander"] summary {{ font-weight:600; }}
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {{ border:1px solid var(--hair); border-radius:var(--radius); overflow:hidden; }}
+    [data-testid="stMetric"], [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius:var(--radius); }}
+    hr {{ border-color:var(--hair); }}
     </style>
 """)
 
@@ -363,29 +383,8 @@ if st.session_state.page == "settings":
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["화면 구성 설정창", "업체 및 조합 요금 설정창", "오류 로그 확인창"])
-    
-    # [탭 1] 화면 구성 설정창
-    with tab1:
-        st.subheader("화면 색상 및 버튼 스타일 설정")
-        st.write("업체 찾기 화면의 강조 색상과 버튼 모양을 조작 및 적용.")
+    tab2 = st.container()
 
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            new_color = st.color_picker("버튼 및 강조 색상 선택", st.session_state.config["primary_color"])
-        with col_c2:
-            new_style = st.radio("버튼 모양 선택", ["default (각진 모양)", "round (둥근 모양)"],
-                                 index=0 if st.session_state.config["button_style"] == "default" else 1)
-
-        if st.button("화면 설정 저장 및 즉시 적용"):
-            st.session_state.config["primary_color"] = new_color
-            st.session_state.config["button_style"] = "default" if "default" in new_style else "round"
-
-            if save_json(CONFIG_FILE, st.session_state.config):
-                st.success("화면 설정이 완벽하게 저장되고 메인 시스템에 적용되었다.")
-                st.rerun()
-
-    # [탭 2] 업체 및 조합 요금 설정창
     with tab2:
         st.subheader("상품별 인쇄 업체 맞춤 설정 및 마스터 관리")
         st.write("엽서, 스티커, 마스킹테이프 등 각 상품 군에 맞는 정밀 공정을 정의하고 업체 데이터를 제어하는 콘솔이다.")
@@ -995,8 +994,42 @@ if st.session_state.page == "settings":
             if summary_rows: st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
             else: st.info("등록된 업체가 없다.")
 
-    # [탭 3] 오류 로그 확인창
-    with tab3:
+# ==========================================
+# [화면 1-2] 환경 설정 (화면 구성 · 오류 로그)
+# ==========================================
+elif st.session_state.page == "app_settings":
+    col_top1, col_top2 = st.columns([8, 2])
+    with col_top1:
+        st.title("환경 설정")
+    with col_top2:
+        if st.button("← 돌아가기", use_container_width=True, key="app_settings_back"):
+            st.session_state.page = "match"
+            st.rerun()
+
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs(["화면 구성", "오류 로그"])
+
+    with tab1:
+        st.subheader("화면 색상 및 버튼 스타일 설정")
+        st.write("업체 찾기 화면의 강조 색상과 버튼 모양을 조작 및 적용.")
+
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            new_color = st.color_picker("버튼 및 강조 색상 선택", st.session_state.config["primary_color"])
+        with col_c2:
+            new_style = st.radio("버튼 모양 선택", ["default (각진 모양)", "round (둥근 모양)"],
+                                 index=0 if st.session_state.config["button_style"] == "default" else 1)
+
+        if st.button("화면 설정 저장 및 즉시 적용"):
+            st.session_state.config["primary_color"] = new_color
+            st.session_state.config["button_style"] = "default" if "default" in new_style else "round"
+
+            if save_json(CONFIG_FILE, st.session_state.config):
+                st.success("화면 설정이 완벽하게 저장되고 메인 시스템에 적용되었다.")
+                st.rerun()
+
+    with tab2:
         st.subheader("시스템 오류 로그 진단")
         if os.path.exists(LOG_FILE):
             with open(LOG_FILE, "r", encoding="utf-8") as f:
@@ -1006,7 +1039,10 @@ if st.session_state.page == "settings":
                 os.remove(LOG_FILE)
                 st.rerun()
         else:
-            st.info("현재 기록된 시스템 오류가 없다. 타디스는 완벽하게 작동 중이다.")
+            st.info("현재 기록된 시스템 오류가 없다.")
+
+if st.session_state.page in ("settings", "app_settings"):
+    st.stop()
 
 # ==========================================
 # [화면 2] 업체 찾기 — 진입 화면 + 1→2→3 단계 마법사
@@ -1578,7 +1614,15 @@ def render_step3():
 
 
 def render_match():
-    render_steps(st.session_state.match_step)
+    col_steps, col_gear = st.columns([9, 1])
+    with col_steps:
+        render_steps(st.session_state.match_step)
+    with col_gear:
+        with st.container(key="gear_wrap"):
+            if st.button("⚙️", key="nav_gear", help="환경 설정"):
+                st.session_state.page = "app_settings"
+                st.rerun()
+
     if st.session_state.match_step == 1:
         render_step1()
     elif st.session_state.match_step == 2:
