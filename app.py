@@ -107,6 +107,16 @@ def _write_vendors_to_sheet(ws, data):
     ws.clear()
     ws.update(rows)
 
+def _restore_empty_categories(data):
+    """업체가 0곳인 상품군은 시트에 행이 없으므로 메타에 적어둔 목록으로 되살린다."""
+    meta = data.get(META_KEY)
+    if isinstance(meta, dict):
+        for cat in meta.get("categories", []):
+            if cat != META_KEY:
+                data.setdefault(cat, [])
+    return data
+
+
 def load_vendors():
     ws = get_gsheet_worksheet()
     if ws is not None:
@@ -126,7 +136,8 @@ def load_vendors():
                     data[META_KEY] = parsed
                 else:
                     data.setdefault(cat, []).append(parsed)
-            # 메타 행만 있고 실제 카테고리가 없으면 비어 있는 것으로 본다.
+            # 업체가 아직 없는 상품군을 먼저 되살린 뒤에 비어 있는지 판단한다.
+            _restore_empty_categories(data)
             if not [c for c in data if c != META_KEY]:
                 _write_vendors_to_sheet(ws, DEFAULT_VENDORS)
                 return DEFAULT_VENDORS
@@ -134,9 +145,16 @@ def load_vendors():
         except Exception as e:
             log_error(f"구글 시트 업체 데이터 로드 실패: {str(e)}")
             st.warning("구글 시트 연결에 실패해 로컬 데이터를 임시로 표시합니다. 오류 로그를 확인해 주세요.")
-    return load_json(DATA_FILE, DEFAULT_VENDORS)
+    return _restore_empty_categories(load_json(DATA_FILE, DEFAULT_VENDORS))
 
 def save_vendors(data):
+    # 업체가 0곳인 상품군도 새로고침 후 남아 있도록 상품군 목록을 메타에 기록한다.
+    meta = data.get(META_KEY)
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["categories"] = [c for c in data if c != META_KEY]
+    data[META_KEY] = meta
+
     ws = get_gsheet_worksheet()
     if ws is not None:
         try:
@@ -522,17 +540,18 @@ if st.session_state.page == "settings":
             st.warning("등록된 상품 카테고리가 없습니다. 아래에서 먼저 상품군을 추가해 주세요.")
 
         with st.expander("➕ 새 상품군 추가 (아크릴키링·코롯토처럼 단가표가 다른 굿즈는 여기서 따로 만듭니다)"):
-            np_col1, np_col2 = st.columns([2, 3])
-            with np_col1:
+            # 폼으로 묶으면 이름과 양식이 항상 함께 전송되어, 입력 직후 버튼을 눌러도 값이 누락되지 않는다.
+            with st.form("add_category_form", clear_on_submit=True):
                 new_prod_name = st.text_input("상품군 이름", placeholder="예: 아크릴키링")
-            with np_col2:
                 new_type_label = st.radio(
-                    "입력 양식 선택",
+                    "입력 양식",
                     list(CATEGORY_TYPE_LABELS.values()),
                     index=0,
                     help="굿즈 종류와 사이즈마다 단가가 다르면 '사이즈별 단가표'를 선택하세요.",
                 )
-            if st.button("이 상품군 추가", type="primary"):
+                submitted = st.form_submit_button("이 상품군 추가", type="primary")
+
+            if submitted:
                 name = new_prod_name.strip()
                 if not name:
                     st.warning("상품군 이름을 입력해 주세요.")
@@ -545,22 +564,45 @@ if st.session_state.page == "settings":
                     st.session_state.vendors[name] = []
                     set_category_type(name, ctype)
                     if save_vendors(st.session_state.vendors):
-                        st.success(f"[{name}] 상품군이 추가되었습니다. 아래에서 선택해 업체를 등록하세요.")
+                        st.success(f"[{name}] 상품군이 추가되었습니다. 아래 ① 상품군에서 선택해 업체를 등록하세요.")
                         st.rerun()
 
         if not prod_list:
             st.stop()
 
-        target_prod = st.selectbox("관리할 상품 카테고리 선택", prod_list)
-        target_type = get_category_type(target_prod)
-        st.caption(f"입력 양식: {CATEGORY_TYPE_LABELS.get(target_type, target_type)}")
+        st.markdown("---")
 
-        current_vendors = st.session_state.vendors.get(target_prod, [])
-        vendor_names = [v.get("업체명", f"업체_{idx}") for idx, v in enumerate(current_vendors)]
-        vendor_names.append("+ 신규 업체 등록")
-        
-        selected_v_name = st.selectbox("설정하거나 수정할 인쇄 업체 선택", vendor_names)
-        is_new = (selected_v_name == "+ 신규 업체 등록")
+        # ── 무엇을 편집할지 고르는 영역 ──
+        with st.container(border=True):
+            pick1, pick2 = st.columns(2)
+            with pick1:
+                target_prod = st.selectbox("① 상품군", prod_list)
+                target_type = get_category_type(target_prod)
+                st.caption(f"입력 양식 · {CATEGORY_TYPE_LABELS.get(target_type, target_type)}")
+
+            current_vendors = st.session_state.vendors.get(target_prod, [])
+            vendor_names = [v.get("업체명", f"업체_{idx}") for idx, v in enumerate(current_vendors)]
+            vendor_names.append("+ 신규 업체 등록")
+
+            with pick2:
+                selected_v_name = st.selectbox("② 업체", vendor_names)
+                st.caption(f"[{target_prod}]에 등록된 업체 {len(current_vendors)}곳")
+
+            is_new = (selected_v_name == "+ 신규 업체 등록")
+
+            if not current_vendors:
+                with st.expander("이 상품군 삭제"):
+                    st.caption(f"등록된 업체가 없는 [{target_prod}] 상품군을 목록에서 지웁니다.")
+                    if st.button(f"[{target_prod}] 상품군 삭제", key="del_category"):
+                        del st.session_state.vendors[target_prod]
+                        meta = st.session_state.vendors.get(META_KEY)
+                        if isinstance(meta, dict):
+                            meta.get("category_types", {}).pop(target_prod, None)
+                        if save_vendors(st.session_state.vendors):
+                            st.success(f"[{target_prod}] 상품군을 삭제했습니다.")
+                            st.rerun()
+
+        st.markdown("---")
 
         # ==========================================================
         # [분기 1] 마스킹 테이프 설정 콘솔 (새로 구현된 부분)
@@ -1004,18 +1046,24 @@ if st.session_state.page == "settings":
                 v_data = current_vendors[v_index]
 
             st.markdown("### 1. 업체 기본 정보")
-            bc1, bc2, bc3 = st.columns(3)
-            with bc1:
-                edit_name = st.text_input("업체명", value=v_data.get("업체명", ""))
-                edit_prod = st.text_input("상품명", value=v_data.get("상품명", target_prod))
-            with bc2:
-                edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
-                edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 50000))
-            with bc3:
-                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
-                edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
-                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1,
-                                          horizontal=True)
+            with st.container(border=True):
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    edit_name = st.text_input("업체명", value=v_data.get("업체명", ""))
+                    edit_prod = st.text_input("상품명", value=v_data.get("상품명", target_prod))
+                with bc2:
+                    edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
+                    edit_free_ship = st.number_input("무료 배송 조건 (원)", min_value=0,
+                                                     value=v_data.get("무료배송액", 50000),
+                                                     help="0으로 두면 무료 배송이 없는 업체로 처리됩니다.")
+                lc1, lc2 = st.columns(2)
+                with lc1:
+                    edit_lead_time = st.text_input("제작 기간", value=v_data.get("제작기간", ""),
+                                                   placeholder="예: 영업일 기준 3~5일")
+                with lc2:
+                    edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
+                                              index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1,
+                                              horizontal=True)
 
             st.markdown("### 2. 세부 종류 · 사이즈 · 수량 구간 정의")
             st.caption(
@@ -1023,32 +1071,41 @@ if st.session_state.page == "settings":
                 "'투명 / 하프미러 / 글리터 / 자개'를, 사이즈에 '20x20 / 30x15 / …'를 입력합니다. "
                 "여기서 입력한 값이 아래 단가표의 행과 열이 됩니다."
             )
-            dc1, dc2 = st.columns(2)
-            with dc1:
-                types_text = st.text_area(
-                    "세부 종류 (한 줄에 하나)",
-                    value="\n".join(v_data.get("세부종류", [])),
-                    placeholder="투명 아크릴\n하프미러 아크릴\n글리터 아크릴\n자개 아크릴",
-                    height=150,
-                )
-            with dc2:
-                sizes_text = st.text_area(
-                    "사이즈 목록 (한 줄에 하나)",
-                    value="\n".join(v_data.get("사이즈목록", [])),
-                    placeholder="20x20\n30x15\n30x30\n40x40",
-                    height=150,
+            with st.container(border=True):
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    types_text = st.text_area(
+                        "세부 종류 — 한 줄에 하나씩",
+                        value="\n".join(v_data.get("세부종류", [])),
+                        placeholder="투명 아크릴\n하프미러 아크릴\n글리터 아크릴\n자개 아크릴",
+                        height=170,
+                    )
+                with dc2:
+                    sizes_text = st.text_area(
+                        "사이즈 — 한 줄에 하나씩",
+                        value="\n".join(v_data.get("사이즈목록", [])),
+                        placeholder="20x20\n30x15\n30x30\n40x40",
+                        height=170,
+                    )
+
+                saved_ranges = v_data.get("수량구간", [[1, 9], [10, 99], [100, 499], [500, 999]])
+                qty_default = ", ".join(f"{r[0]}-{r[1]}" for r in saved_ranges)
+                qty_text = st.text_input(
+                    "수량 구간 — 쉼표로 구분",
+                    value=qty_default,
+                    placeholder="1-9, 10-99, 100-499, 500-999",
+                    help="'1000+' 처럼 적으면 1000개 이상을 뜻합니다.",
                 )
 
-            saved_ranges = v_data.get("수량구간", [[1, 9], [10, 99], [100, 499], [500, 999]])
-            qty_default = ", ".join(f"{r[0]}-{r[1]}" for r in saved_ranges)
-            qty_text = st.text_input(
-                "수량 구간 (쉼표로 구분. 예: 1-9, 10-99, 100-499, 500-999, 1000+)",
-                value=qty_default,
-            )
+                sel_types = parse_lines(types_text)
+                sel_sizes = parse_lines(sizes_text)
+                qty_ranges = parse_qty_ranges(qty_text)
 
-            sel_types = parse_lines(types_text)
-            sel_sizes = parse_lines(sizes_text)
-            qty_ranges = parse_qty_ranges(qty_text)
+                if sel_types and sel_sizes and qty_ranges:
+                    st.caption(
+                        f"입력됨 · 종류 {len(sel_types)}종 / 사이즈 {len(sel_sizes)}종 / 수량 구간 {len(qty_ranges)}개 "
+                        f"→ 아래에 {len(sel_types)}개의 표가 만들어집니다."
+                    )
 
             st.markdown("### 3. 종류별 사이즈 × 수량 단가표")
             edited_tables = {}
@@ -1183,50 +1240,98 @@ if st.session_state.page == "settings":
                 v_index = vendor_names.index(selected_v_name)
                 v_data = current_vendors[v_index]
 
-            st.markdown("### 1. 업체 기본 정보, 과금 구조 및 단가 결정 방식 선택")
-            col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-            with col_v1:
-                edit_name = st.text_input("업체 이름", value=v_data.get("업체명", ""))
-                edit_mode = st.radio("과금 방식", ["1판 자유 배치", "수량별 장당 단가"], index=0 if v_data.get("과금방식")=="1판 자유 배치" else 1)
-            with col_v2:
-                edit_pricing_rule = st.radio("단가 결정 방식 선택", ["기준단가 + 옵션 추가금 합산", "옵션 조합별 단가 직접 설정"],
-                                             index=0 if v_data.get("단가결정방식", "기준단가 + 옵션 추가금 합산")=="기준단가 + 옵션 추가금 합산" else 1)
-                edit_base_p = st.number_input("기준 단가 (원)", min_value=0, value=v_data.get("기준단가", 100)) if edit_pricing_rule=="기준단가 + 옵션 추가금 합산" else 0
-            with col_v3:
-                edit_white = st.selectbox("화이트 인쇄 가능 여부", ["지원 가능", "지원 불가"], index=0 if v_data.get("화이트인쇄")=="지원 가능" else 1)
-                edit_profile = st.selectbox("지원 색상 프로필", ["CMYK 전용", "CMYK + RGB 겸용"], index=0 if v_data.get("색상프로필")=="CMYK 전용" else 1)
-            with col_v4:
-                edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
-                edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 50000))
-
-            col_v5, col_v6 = st.columns(2)
-            with col_v5:
-                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
-            with col_v6:
+            st.markdown("### 1. 업체 기본 정보")
+            with st.container(border=True):
+                b1, b2 = st.columns(2)
+                with b1:
+                    edit_name = st.text_input("업체 이름", value=v_data.get("업체명", ""))
+                    edit_lead_time = st.text_input("제작 기간", value=v_data.get("제작기간", ""),
+                                                   placeholder="예: 영업일 기준 3~5일")
+                with b2:
+                    edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
+                    edit_free_ship = st.number_input("무료 배송 조건 (원)", min_value=0,
+                                                     value=v_data.get("무료배송액", 50000),
+                                                     help="0으로 두면 무료 배송이 없는 업체로 처리됩니다.")
                 edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
-                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
+                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1,
+                                          horizontal=True)
 
-            if edit_mode == "1판 자유 배치":
-                sc1, sc2 = st.columns(2)
-                with sc1: edit_sw = st.number_input("1판 가로 규격 (mm)", min_value=100, value=v_data.get("판가로", 1000))
-                with sc2: edit_sh = st.number_input("1판 세로 규격 (mm)", min_value=100, value=v_data.get("판세로", 500))
-            else: edit_sw, edit_sh = 0, 0
+            st.markdown("### 2. 과금 방식")
+            with st.container(border=True):
+                p1, p2 = st.columns(2)
+                with p1:
+                    edit_mode = st.radio("수량을 세는 단위", ["1판 자유 배치", "수량별 장당 단가"],
+                                         index=0 if v_data.get("과금방식") == "1판 자유 배치" else 1,
+                                         help="한 판에 여러 개를 배치해 판 단위로 값을 매기면 '1판 자유 배치'입니다.")
+                with p2:
+                    edit_pricing_rule = st.radio("단가를 정하는 방법",
+                                                 ["기준단가 + 옵션 추가금 합산", "옵션 조합별 단가 직접 설정"],
+                                                 index=0 if v_data.get("단가결정방식", "기준단가 + 옵션 추가금 합산") == "기준단가 + 옵션 추가금 합산" else 1)
 
-            st.markdown("### 2. 칼선 추가금 과금 규칙")
-            kc1, kc2, kc3, kc4 = st.columns(4)
-            with kc1: edit_half_rule = st.selectbox("반칼과금유형", ["기본가에 포함", "별도 필수 과금", "선택 옵션 추가금"], index=["기본가에 포함", "별도 필수 과금", "선택 옵션 추가금"].index(v_data.get("반칼과금유형", "기본가에 포함")))
-            with kc2: edit_half_price = st.number_input("반칼추가금 (원)", min_value=0, value=v_data.get("반칼추가금", 0))
-            with kc3: edit_full_rule = st.selectbox("완칼과금유형", ["기본가에 포함", "별도 필수 과금", "선택 옵션 추가금"], index=["기본가에 포함", "별도 필수 과금", "선택 옵션 추가금"].index(v_data.get("완칼과금유형", "기본가에 포함")))
-            with kc4: edit_full_price = st.number_input("완칼추가금 (원)", min_value=0, value=v_data.get("완칼추가금", 0))
+                if edit_pricing_rule == "기준단가 + 옵션 추가금 합산":
+                    edit_base_p = st.number_input("기준 단가 (원)", min_value=0, value=v_data.get("기준단가", 100),
+                                                  help="옵션 추가금을 더하기 전의 기본 단가입니다.")
+                else:
+                    edit_base_p = 0
 
-            st.markdown("### 3. 이 업체가 제공하는 재료 목록 선택")
-            oc1, oc2, oc3, oc4 = st.columns(4)
-            with oc1: sel_papers = st.multiselect("제공 용지 선택", st.session_state.master_opts["용지"], default=v_data.get("제공용지", [st.session_state.master_opts["용지"][0]]))
-            with oc2: sel_glues = st.multiselect("제공 접착 선택", st.session_state.master_opts["접착"], default=v_data.get("제공접착", [st.session_state.master_opts["접착"][0]]))
-            with oc3: sel_backs = st.multiselect("제공 후지 선택", st.session_state.master_opts["후지"], default=v_data.get("제공후지", [st.session_state.master_opts["후지"][0]]))
-            with oc4: sel_coats = st.multiselect("제공 코팅 선택", st.session_state.master_opts["코팅"], default=v_data.get("제공코팅", [st.session_state.master_opts["코팅"][0]]))
+                if edit_mode == "1판 자유 배치":
+                    st.caption("1판 규격")
+                    sc1, sc2 = st.columns(2)
+                    with sc1:
+                        edit_sw = st.number_input("가로 (mm)", min_value=100, value=v_data.get("판가로", 1000))
+                    with sc2:
+                        edit_sh = st.number_input("세로 (mm)", min_value=100, value=v_data.get("판세로", 500))
+                else:
+                    edit_sw, edit_sh = 0, 0
 
-            st.markdown("### 4. 구간별 조합 요금 스프레드시트 매트릭스")
+            st.markdown("### 3. 인쇄 사양")
+            with st.container(border=True):
+                s1, s2 = st.columns(2)
+                with s1:
+                    edit_white = st.selectbox("화이트 인쇄", ["지원 가능", "지원 불가"],
+                                              index=0 if v_data.get("화이트인쇄") == "지원 가능" else 1)
+                with s2:
+                    edit_profile = st.selectbox("지원 색상 프로필", ["CMYK 전용", "CMYK + RGB 겸용"],
+                                                index=0 if v_data.get("색상프로필") == "CMYK 전용" else 1)
+
+            st.markdown("### 4. 칼선 추가금")
+            with st.container(border=True):
+                CUT_RULES = ["기본가에 포함", "별도 필수 과금", "선택 옵션 추가금"]
+                st.caption("반칼선 (스티커를 떼는 선)")
+                k1, k2 = st.columns([3, 2])
+                with k1:
+                    edit_half_rule = st.selectbox("과금 유형", CUT_RULES,
+                                                  index=CUT_RULES.index(v_data.get("반칼과금유형", "기본가에 포함")),
+                                                  key="half_rule")
+                with k2:
+                    edit_half_price = st.number_input("추가금 (원)", min_value=0,
+                                                      value=v_data.get("반칼추가금", 0), key="half_price")
+                st.caption("완칼선 (모양대로 자르는 선)")
+                k3, k4 = st.columns([3, 2])
+                with k3:
+                    edit_full_rule = st.selectbox("과금 유형", CUT_RULES,
+                                                  index=CUT_RULES.index(v_data.get("완칼과금유형", "기본가에 포함")),
+                                                  key="full_rule")
+                with k4:
+                    edit_full_price = st.number_input("추가금 (원)", min_value=0,
+                                                      value=v_data.get("완칼추가금", 0), key="full_price")
+
+            st.markdown("### 5. 취급 재료")
+            st.caption("이 업체가 제공하는 재료만 선택하세요. 여기서 고른 것만 아래 단가표에 쓸 수 있습니다.")
+            with st.container(border=True):
+                m1, m2 = st.columns(2)
+                with m1:
+                    sel_papers = st.multiselect("용지", st.session_state.master_opts["용지"],
+                                                default=v_data.get("제공용지", [st.session_state.master_opts["용지"][0]]))
+                    sel_backs = st.multiselect("후지", st.session_state.master_opts["후지"],
+                                               default=v_data.get("제공후지", [st.session_state.master_opts["후지"][0]]))
+                with m2:
+                    sel_glues = st.multiselect("접착", st.session_state.master_opts["접착"],
+                                               default=v_data.get("제공접착", [st.session_state.master_opts["접착"][0]]))
+                    sel_coats = st.multiselect("코팅", st.session_state.master_opts["코팅"],
+                                               default=v_data.get("제공코팅", [st.session_state.master_opts["코팅"][0]]))
+
+            st.markdown("### 6. 구간별 조합 단가표")
             val_col_name = "옵션추가금(원)" if edit_pricing_rule == "기준단가 + 옵션 추가금 합산" else "조합적용단가(원)"
 
             matrix_data = v_data.get("조합단가표", [])
@@ -1307,7 +1412,7 @@ if st.session_state.page == "settings":
                             st.rerun()
 
             st.markdown("---")
-            st.markdown(f"### 5. [{target_prod}] 등록 업체 전체 마스터 요약 표")
+            st.markdown(f"### 7. 등록된 [{target_prod}] 업체 요약")
             summary_rows = []
             for v in current_vendors:
                 summary_rows.append({
