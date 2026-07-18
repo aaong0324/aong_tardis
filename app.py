@@ -138,7 +138,12 @@ DEFAULT_MASTER_OPTIONS = {
     "마테가로": ["5m", "7m", "10m"],
     "마테세로": ["15mm", "20mm", "25mm", "30mm", "40mm", "50mm"],
     "마테도수": ["단면 4도", "단면 1도 (별색)", "무동판 인쇄"],
-    "마테포장": ["수축 튜브 포장", "라벨스티커 스포 포장", "개별 종이갑 포장"]
+    "마테포장": ["수축 튜브 포장", "라벨스티커 스포 포장", "개별 종이갑 포장"],
+    "아크릴굿즈종류": [
+        "아크릴키링", "코롯토", "아크릴스티커", "스마트톡", "스탠드/디오라마",
+        "포카홀더/포토액자", "아크릴쉐이커", "아크릴카라비너", "NFC/전자태그",
+        "자석/뱃지/코스터/참", "문구류(집게, 볼펜 등)", "아크릴 재단"
+    ]
 }
 
 # 기본 업체 데이터 (스티커, 엽서, 마스킹테이프 기본 탑재)
@@ -484,6 +489,13 @@ if st.session_state.page == "settings":
                 edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
                 edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 50000))
 
+            mtc4, mtc5 = st.columns(2)
+            with mtc4:
+                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
+            with mtc5:
+                edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
+                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
+
             st.markdown("### 2. 마테 타입, 규격, 인쇄도수 및 포장법 다중 지정")
             mt_sec1, mt_sec2, mt_sec3 = st.columns(3)
             with mt_sec1:
@@ -608,6 +620,8 @@ if st.session_state.page == "settings":
                             "타입별라벨설정": type_lbl_config,
                             "배송비": edit_ship,
                             "무료배송액": edit_free_ship,
+                            "제작기간": edit_lead_time.strip(),
+                            "빠른배송가능": edit_fast_ship,
                             "조합단가표": clean_matrix
                         }
 
@@ -642,7 +656,8 @@ if st.session_state.page == "settings":
                     "세로 편집 오차": f"+{v.get('세로편집추가', 1.5)}mm",
                     "제공도수": ", ".join(v.get("제공도수", [])),
                     "원통 라벨 포장": lbl_desc,
-                    "배송비": f"{v.get('배송비', 0):,} 원"
+                    "배송비": f"{v.get('배송비', 0):,} 원",
+                    "제작기간": v.get("제작기간", "-"), "빠른배송": v.get("빠른배송가능", "불가능")
                 })
             if mt_summary:
                 st.dataframe(pd.DataFrame(mt_summary), use_container_width=True)
@@ -691,6 +706,13 @@ if st.session_state.page == "settings":
                 edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 30000))
                 edit_profile = st.selectbox("지원 색상 프로필", ["CMYK 전용", "CMYK + RGB 겸용"], index=0 if v_data.get("색상프로필")=="CMYK 전용" else 1)
                 edit_white = st.selectbox("화이트 인쇄 호환 여부", ["지원 불가", "지원 가능"], index=0 if v_data.get("화이트인쇄")=="지원 불가" else 1)
+
+            pc5, pc6 = st.columns(2)
+            with pc5:
+                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
+            with pc6:
+                edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
+                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
 
             st.markdown("### 2. 인쇄 방식, 도수 및 엽서 용지 다중 선택")
             ic1, ic2, ic3 = st.columns(3)
@@ -823,7 +845,9 @@ if st.session_state.page == "settings":
                             "최대가로": edit_max_w, "최대세로": edit_max_h, "후가공목록": parse_post_kv(edit_post_str),
                             "재단비유형": edit_cut_type, "재단비별도": edit_cut_fee, "편집여백플러스": edit_bleed,
                             "안전여백마이너스": edit_safe, "색상프로필": edit_profile, "화이트인쇄": edit_white,
-                            "배송비": edit_ship, "무료배송액": edit_free_ship, "조합단가표": clean_matrix
+                            "배송비": edit_ship, "무료배송액": edit_free_ship,
+                            "제작기간": edit_lead_time.strip(), "빠른배송가능": edit_fast_ship,
+                            "조합단가표": clean_matrix
                         }
 
                         if is_new: st.session_state.vendors[target_prod].append(updated_v)
@@ -844,13 +868,140 @@ if st.session_state.page == "settings":
                     "인쇄방식": ", ".join(v.get("제공인쇄방식", [])), "인쇄도수": ", ".join(v.get("제공인쇄도수", [])),
                     "사이즈모드": v.get("사이즈모드", ""), "여백(편집+/안전-)": f"+{v.get('편집여백플러스',0)} / -{v.get('안전여백마이너스',0)} mm",
                     "재단비": v.get("재단비유형", "") if v.get("재단비유형")=="인쇄 가격에 포함" else f"별도({v.get('재단비별도',0):,}원)",
-                    "후가공수": f"{len(v.get('후가공목록', {}))}개 종류", "배송비": f"{v.get('배송비', 0):,} 원"
+                    "후가공수": f"{len(v.get('후가공목록', {}))}개 종류", "배송비": f"{v.get('배송비', 0):,} 원",
+                    "제작기간": v.get("제작기간", "-"), "빠른배송": v.get("빠른배송가능", "불가능")
                 })
             if post_summary: st.dataframe(pd.DataFrame(post_summary), use_container_width=True)
             else: st.info("등록된 엽서 업체가 없다.")
 
         # ==========================================================
-        # [분기 3] 스티커 및 기타 일반 상품 설정 콘솔
+        # [분기 3] 아크릴 굿즈 설정 콘솔
+        # ==========================================================
+        elif target_prod == "아크릴":
+            if is_new:
+                v_data = {
+                    "업체명": "", "상품명": "",
+                    "제공굿즈종류": [st.session_state.master_opts["아크릴굿즈종류"][0]],
+                    "단가결정방식": "옵션 조합별 단가 직접 설정", "기준단가": 0,
+                    "배송비": 3000, "무료배송액": 50000,
+                    "제작기간": "", "빠른배송가능": "불가능",
+                    "조합단가표": []
+                }
+                v_index = len(current_vendors)
+            else:
+                v_index = vendor_names.index(selected_v_name)
+                v_data = current_vendors[v_index]
+
+            st.markdown("### 1. 아크릴 업체 기본 정보")
+            ac1, ac2, ac3 = st.columns(3)
+            with ac1:
+                edit_name = st.text_input("업체명", value=v_data.get("업체명", ""))
+                edit_prod = st.text_input("상품명", value=v_data.get("상품명", ""))
+            with ac2:
+                edit_pricing_rule = st.radio("단가 결정 방식", ["옵션 조합별 단가 직접 설정", "기준단가 + 옵션 추가금 합산"],
+                                             index=0 if v_data.get("단가결정방식", "옵션 조합별 단가 직접 설정") == "옵션 조합별 단가 직접 설정" else 1)
+                edit_base_p = st.number_input("기준 단가 (원, 합산 방식일 때 사용)", min_value=0, value=v_data.get("기준단가", 0))
+            with ac3:
+                edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
+                edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 50000))
+
+            ac4, ac5 = st.columns(2)
+            with ac4:
+                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
+            with ac5:
+                edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
+                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
+
+            st.markdown("### 2. 제작 가능한 굿즈 종류 선택 (복수 선택 가능)")
+            sel_goods = st.multiselect("제작 가능 굿즈 종류", st.session_state.master_opts["아크릴굿즈종류"],
+                                       default=v_data.get("제공굿즈종류", [st.session_state.master_opts["아크릴굿즈종류"][0]]))
+
+            st.markdown("### 3. 굿즈 종류별 구간 요금 스프레드시트 매트릭스")
+            val_col_name = "조합적용단가(원)" if edit_pricing_rule == "옵션 조합별 단가 직접 설정" else "옵션추가금(원)"
+
+            matrix_data = v_data.get("조합단가표", [])
+            if not matrix_data and sel_goods:
+                matrix_data = [{"굿즈종류": sel_goods[0], "최소수량": 1, "최대수량": 50, val_col_name: 500}]
+            else:
+                for row in matrix_data:
+                    if "적용값" in row: row[val_col_name] = row.pop("적용값")
+                    else:
+                        for old_k in ["조합적용단가(원)", "옵션추가금(원)"]:
+                            if old_k in row and val_col_name != old_k: row[val_col_name] = row.pop(old_k)
+
+            df_matrix = pd.DataFrame(matrix_data)
+            req_cols = ["굿즈종류", "최소수량", "최대수량", val_col_name]
+            for c in req_cols:
+                if c not in df_matrix.columns: df_matrix[c] = 0 if "수량" in c or "원" in c else ""
+            df_matrix = df_matrix[req_cols]
+
+            col_config = {
+                "굿즈종류": st.column_config.SelectboxColumn("굿즈 종류 선택", options=sel_goods, required=True),
+                "최소수량": st.column_config.NumberColumn("최소수량(개)", min_value=1, step=1, required=True),
+                "최대수량": st.column_config.NumberColumn("최대수량(개)", min_value=1, step=1, required=True),
+                val_col_name: st.column_config.NumberColumn(val_col_name, min_value=0, step=10, required=True)
+            }
+
+            edited_matrix = st.data_editor(df_matrix, column_config=col_config, num_rows="dynamic", use_container_width=True, key=f"acrylic_matrix_{selected_v_name}")
+
+            st.markdown("---")
+            btn_col1, btn_col2 = st.columns([1, 4])
+            with btn_col1:
+                if not is_new:
+                    if st.button("이 아크릴 업체 삭제"):
+                        del st.session_state.vendors[target_prod][v_index]
+                        save_vendors(st.session_state.vendors)
+                        st.success("업체가 삭제되었다.")
+                        st.rerun()
+            with btn_col2:
+                if st.button("아크릴 업체 설정 및 단가 매트릭스 최종 저장"):
+                    if not edit_name.strip():
+                        st.warning("업체 이름을 반드시 입력해야 한다.")
+                    else:
+                        records = edited_matrix.to_dict(orient="records")
+                        clean_matrix = []
+                        for r in records:
+                            clean_matrix.append({
+                                "굿즈종류": str(r.get("굿즈종류", "")),
+                                "최소수량": int(r.get("최소수량", 1)),
+                                "최대수량": int(r.get("최대수량", 1)),
+                                "적용값": int(r.get(val_col_name, 0))
+                            })
+
+                        updated_v = {
+                            "업체명": edit_name.strip(), "상품명": edit_prod.strip(),
+                            "단가결정방식": edit_pricing_rule, "기준단가": edit_base_p,
+                            "제공굿즈종류": sel_goods,
+                            "배송비": edit_ship, "무료배송액": edit_free_ship,
+                            "제작기간": edit_lead_time.strip(), "빠른배송가능": edit_fast_ship,
+                            "조합단가표": clean_matrix
+                        }
+
+                        if is_new: st.session_state.vendors[target_prod].append(updated_v)
+                        else: st.session_state.vendors[target_prod][v_index] = updated_v
+
+                        if save_vendors(st.session_state.vendors):
+                            st.success(f"[{edit_name}] 아크릴 업체 설정이 저장되었다.")
+                            st.rerun()
+
+            st.markdown("---")
+            st.markdown("### 4. 등록된 아크릴 업체 전체 마스터 요약 표")
+            ac_summary = []
+            for v in current_vendors:
+                ac_summary.append({
+                    "업체명": v.get("업체명", ""), "상품명": v.get("상품명", ""),
+                    "제작 가능 굿즈": ", ".join(v.get("제공굿즈종류", [])),
+                    "단가결정방식": v.get("단가결정방식", ""),
+                    "제작기간": v.get("제작기간", "-"),
+                    "빠른배송": v.get("빠른배송가능", "불가능"),
+                    "배송비": f"{v.get('배송비', 0):,} 원",
+                    "조합규칙수": f"{len(v.get('조합단가표', []))}개 구간"
+                })
+            if ac_summary: st.dataframe(pd.DataFrame(ac_summary), use_container_width=True)
+            else: st.info("등록된 아크릴 업체가 없다.")
+
+        # ==========================================================
+        # [분기 4] 스티커 및 기타 일반 상품 설정 콘솔
         # ==========================================================
         else:
             if is_new:
@@ -887,7 +1038,14 @@ if st.session_state.page == "settings":
             with col_v4:
                 edit_ship = st.number_input("기본 배송비 (원)", min_value=0, value=v_data.get("배송비", 3000))
                 edit_free_ship = st.number_input("무료 배송 조건 (원, 0=없음)", min_value=0, value=v_data.get("무료배송액", 50000))
-                
+
+            col_v5, col_v6 = st.columns(2)
+            with col_v5:
+                edit_lead_time = st.text_input("제작 기간 (예: 영업일 기준 3~5일)", value=v_data.get("제작기간", ""))
+            with col_v6:
+                edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
+                                          index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
+
             if edit_mode == "1판 자유 배치":
                 sc1, sc2 = st.columns(2)
                 with sc1: edit_sw = st.number_input("1판 가로 규격 (mm)", min_value=100, value=v_data.get("판가로", 1000))
@@ -975,7 +1133,9 @@ if st.session_state.page == "settings":
                             "반칼최소가로": v_data.get("반칼최소가로", 5.0), "반칼최소세로": v_data.get("반칼최소세로", 5.0),
                             "반칼색상": v_data.get("반칼색상", "#FF00FF"), "완칼색상": v_data.get("완칼색상", "#00FFFF"),
                             "재단선마크": v_data.get("재단선마크", "+자 형"), "칼선굵기": v_data.get("칼선굵기", 0.25),
-                            "배송비": edit_ship, "무료배송액": edit_free_ship, "제공용지": sel_papers,
+                            "배송비": edit_ship, "무료배송액": edit_free_ship,
+                            "제작기간": edit_lead_time.strip(), "빠른배송가능": edit_fast_ship,
+                            "제공용지": sel_papers,
                             "제공접착": sel_glues, "제공후지": sel_backs, "제공코팅": sel_coats, "조합단가표": clean_matrix
                         }
 
@@ -998,7 +1158,8 @@ if st.session_state.page == "settings":
                     "화이트인쇄": v.get("화이트인쇄", ""), "색상프로필": v.get("색상프로필", ""),
                     "반칼과금": f"{v.get('반칼과금유형','')} ({v.get('반칼추가금',0):,}원)",
                     "완칼과금": f"{v.get('완칼과금유형','')} ({v.get('완칼추가금',0):,}원)",
-                    "배송비": f"{v.get('배송비', 0):,} 원", "조합규칙수": f"{len(v.get('조합단가표', []))}개 구간"
+                    "배송비": f"{v.get('배송비', 0):,} 원", "조합규칙수": f"{len(v.get('조합단가표', []))}개 구간",
+                    "제작기간": v.get("제작기간", "-"), "빠른배송": v.get("빠른배송가능", "불가능")
                 })
             if summary_rows: st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
             else: st.info("등록된 업체가 없다.")
@@ -1281,6 +1442,17 @@ def render_step2_tape():
     _pills("포장 방식", sorted(all_packs), "mc_mt_pack")
 
 
+def render_step2_acrylic():
+    vendors = st.session_state.vendors.get("아크릴", [])
+    all_goods = set()
+    for v in vendors:
+        all_goods.update(v.get("제공굿즈종류", []))
+
+    st.markdown("**제작할 굿즈 종류 및 수량**")
+    _pills("굿즈 종류", sorted(all_goods), "mc_ac_goods")
+    st.number_input("총 제작 수량 (개)", min_value=1, value=50, step=10, key="mc_ac_qty")
+
+
 def render_step2():
     product = st.session_state.match_product
     if not product:
@@ -1305,6 +1477,8 @@ def render_step2():
         render_step2_tape()
     elif product == "엽서":
         render_step2_postcard()
+    elif product == "아크릴":
+        render_step2_acrylic()
     else:
         render_step2_generic(product)
 
@@ -1321,6 +1495,16 @@ def render_step2():
 
 
 # ── 업체별 최종 가격 계산 (기존 계산 로직을 그대로 이식) ──
+
+def _lead_badges(v):
+    badges = []
+    lead = str(v.get("제작기간", "") or "").strip()
+    if lead:
+        badges.append(f"제작기간 {lead}")
+    if v.get("빠른배송가능", "불가능") == "가능":
+        badges.append("⚡ 빠른배송 가능")
+    return badges
+
 
 def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, sel_c,
                           req_white, req_rgb, req_half, req_full):
@@ -1422,6 +1606,7 @@ def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, 
             badges.append(f"반칼 {half_fee:,}원")
         if f_type != "기본가에 포함" or full_fee:
             badges.append(f"완칼 {full_fee:,}원")
+        badges.extend(_lead_badges(v))
 
         results.append({
             "업체명": v.get("업체명", ""),
@@ -1508,6 +1693,7 @@ def calc_postcard_results(size_choice_mode, sel_fixed_str, target_w, target_h, t
             badges.append(f"후가공 {post_fee_total:,}원")
         if cut_fee:
             badges.append(f"재단비 {cut_fee:,}원")
+        badges.extend(_lead_badges(v))
 
         results.append({
             "업체명": f"{v.get('업체명', '')} ({v.get('상품명', '')})",
@@ -1567,12 +1753,60 @@ def calc_tape_results(user_type, user_w, user_h, total_qty, user_color, user_pac
         ]
         if lbl_info:
             badges.append(lbl_info)
+        badges.extend(_lead_badges(v))
 
         results.append({
             "업체명": f"{v.get('업체명', '')} ({v.get('상품명', '')})",
             "최종총가격": final_total,
             "badges": badges,
             "note": "",
+        })
+    return sorted(results, key=lambda x: x["최종총가격"])
+
+
+def calc_acrylic_results(goods_type, total_qty):
+    vendors = st.session_state.vendors.get("아크릴", [])
+    results = []
+    for v in vendors:
+        if goods_type not in v.get("제공굿즈종류", []):
+            continue
+
+        pricing_rule = v.get("단가결정방식", "옵션 조합별 단가 직접 설정")
+        base_p = v.get("기준단가", 0) if pricing_rule == "기준단가 + 옵션 추가금 합산" else 0
+        matrix = v.get("조합단가표", [])
+
+        matched_val = 0
+        found = False
+        for row in matrix:
+            if row.get("굿즈종류") == goods_type:
+                if row.get("최소수량", 1) <= total_qty <= row.get("최대수량", 999999):
+                    matched_val = row.get("적용값", 0)
+                    found = True
+                    break
+        if not found:
+            continue
+
+        if pricing_rule == "기준단가 + 옵션 추가금 합산":
+            eff_unit = base_p + matched_val
+            calc_note = f"기준료({base_p:,}원) + 조합추가금({matched_val:,}원)"
+        else:
+            eff_unit = matched_val
+            calc_note = f"조합 고유 단가 {eff_unit:,}원 적용"
+
+        print_total = total_qty * eff_unit
+        ship_fee = v.get("배송비", 0)
+        if v.get("무료배송액", 0) > 0 and print_total >= v.get("무료배송액", 0):
+            ship_fee = 0
+        final_total = print_total + ship_fee
+
+        badges = [f"개당 {eff_unit:,}원", "무료배송" if ship_fee == 0 else f"배송비 {ship_fee:,}원"]
+        badges.extend(_lead_badges(v))
+
+        results.append({
+            "업체명": f"{v.get('업체명', '')} ({v.get('상품명', '')})",
+            "최종총가격": final_total,
+            "badges": badges,
+            "note": calc_note,
         })
     return sorted(results, key=lambda x: x["최종총가격"])
 
@@ -1633,6 +1867,12 @@ def render_step3():
         summary = f"{size_label} · {qty:,}장 · {sel_m} · {sel_c} · {sel_p}"
         results = calc_postcard_results(size_choice_mode, sel_fixed_str, target_w, target_h, qty,
                                          sel_m, sel_c, sel_p, req_white, req_rgb, sel_posts)
+
+    elif product == "아크릴":
+        goods_type = st.session_state.get("mc_ac_goods")
+        qty = st.session_state.get("mc_ac_qty", 50)
+        summary = f"{goods_type} · {qty:,}개"
+        results = calc_acrylic_results(goods_type, qty)
 
     else:
         size_w = st.session_state.get("mc_gen_w", 50)
