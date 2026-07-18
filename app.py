@@ -238,6 +238,14 @@ DEFAULT_CONFIG = {
     "button_style": "default",
 }
 
+# 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
+UPDATE_NOTES = [
+    {"date": "2026-07-18", "note": "환경 설정 화면 분리, 마법사 단계에 톱니바퀴 아이콘 추가, 사용 방법·업데이트 노트 화면 신설"},
+    {"date": "2026-07-17", "note": "업체 데이터 구글 시트 연동 — 여러 사용자가 등록한 업체 정보를 실시간으로 공유"},
+    {"date": "2026-07-16", "note": "업체 찾기 화면을 진입화면 + 1→2→3단계 마법사 UI로 전면 개편"},
+    {"date": "2026-07-15", "note": "인쇄 업체 최저가 비교 프로그램 최초 배포"},
+]
+
 if "vendors" not in st.session_state:
     st.session_state.vendors = load_vendors()
 if "config" not in st.session_state:
@@ -267,7 +275,7 @@ st.html(f"""
         --mute:#8a8a8a; --tint:#f7f7f7; --radius:{_RADIUS}; --accent:{_ACCENT};
     }}
     html, body, [class*="css"] {{ font-family:'Pretendard Variable',Pretendard,system-ui,sans-serif; }}
-    .block-container {{ max-width:{_MAX_WIDTH}; padding-top:2.5rem; padding-bottom:5rem; }}
+    .block-container {{ max-width:{_MAX_WIDTH}; padding-top:3.5rem; padding-bottom:5rem; }}
     h1, h2, h3 {{ letter-spacing:-0.02em; }}
 
     /* ── 스텝 인디케이터 ── */
@@ -323,12 +331,13 @@ st.html(f"""
         background:var(--ink) !important; border-color:var(--ink) !important; color:#fff !important;
     }}
 
-    /* 환경 설정 톱니바퀴 아이콘 (마법사 우측 상단) */
-    [class*="st-key-gear_wrap"] button {{
+    /* 상단 바 아이콘 (좌: 사용 방법, 우: 환경 설정) */
+    [class*="st-key-help_wrap"] button, [class*="st-key-gear_wrap"] button {{
         border-color:var(--hair); background:var(--paper); padding:0; width:38px; height:38px;
-        font-size:16px; float:right;
+        font-size:16px; margin:0 auto;
     }}
-    [class*="st-key-gear_wrap"] button:hover {{ border-color:var(--ink); }}
+    [class*="st-key-help_wrap"] button:hover, [class*="st-key-gear_wrap"] button:hover {{ border-color:var(--ink); }}
+    [class*="st-key-gear_wrap"], [class*="st-key-help_wrap"] {{ display:flex; justify-content:center; }}
 
     /* ── 탭 · 익스팬더 · 표 : 모던 톤으로 통일 ── */
     button[data-baseweb="tab"] {{ font-weight:700; font-size:14px; }}
@@ -1041,13 +1050,72 @@ elif st.session_state.page == "app_settings":
         else:
             st.info("현재 기록된 시스템 오류가 없다.")
 
-if st.session_state.page in ("settings", "app_settings"):
+# ==========================================
+# [화면 1-3] 사용 방법 · 업데이트 노트
+# ==========================================
+elif st.session_state.page == "info":
+    col_top1, col_top2 = st.columns([8, 2])
+    with col_top1:
+        st.title("사용 방법 · 업데이트 노트")
+    with col_top2:
+        if st.button("← 돌아가기", use_container_width=True, key="info_back"):
+            st.session_state.page = "match" if st.session_state.match_product or st.session_state.match_step != 1 else "landing"
+            st.rerun()
+
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs(["사용 방법", "업데이트 노트"])
+
+    with tab1:
+        st.markdown("""
+##### 1. 업체 찾기
+랜딩 화면에서 **업체 찾기**를 누르면 **제품 선택 → 옵션 선택 → 추천 결과** 3단계로 진행됩니다.
+원하는 제품과 규격·수량·용지 등 옵션을 고르면, 등록된 업체 중 조건에 맞는 곳을 최종 결제액이
+낮은 순으로 보여줍니다.
+
+##### 2. 업체 등록
+랜딩 화면에서 **업체 등록**을 누르면 관리 콘솔로 이동합니다. 여기서 상품 카테고리별로 업체와
+단가표(용지·접착·후지·코팅 조합, 수량 구간별 가격 등)를 등록·수정할 수 있습니다.
+
+##### 3. 여러 사람과 데이터 공유
+구글 시트 연동이 되어 있으면, 관리 콘솔에서 등록·수정한 업체 데이터가 이 앱을 쓰는 모든 사용자에게
+공유됩니다. 다른 사람이 등록한 최신 내용을 반영하려면 관리 콘솔 상단의 **새로고침** 버튼을 누르세요.
+
+##### 4. 환경 설정
+마법사 화면 우측 상단의 ⚙️ 아이콘을 누르면 버튼 색상 등 화면 설정과 오류 로그를 확인할 수 있습니다.
+        """)
+
+    with tab2:
+        for entry in UPDATE_NOTES:
+            st.markdown(f"**{entry['date']}**  \n{entry['note']}")
+            st.markdown("---")
+
+if st.session_state.page in ("settings", "app_settings", "info"):
     st.stop()
 
 # ==========================================
 # [화면 2] 업체 찾기 — 진입 화면 + 1→2→3 단계 마법사
 # ==========================================
+def render_top_bar(steps_current=None):
+    col_l, col_c, col_r = st.columns([1, 8, 1])
+    with col_l:
+        with st.container(key="help_wrap"):
+            if st.button("❔", key="nav_help", help="사용 방법 · 업데이트 노트"):
+                st.session_state.page = "info"
+                st.rerun()
+    with col_c:
+        if steps_current:
+            render_steps(steps_current)
+    with col_r:
+        with st.container(key="gear_wrap"):
+            if st.button("⚙️", key="nav_gear", help="환경 설정"):
+                st.session_state.page = "app_settings"
+                st.rerun()
+
+
 def render_landing():
+    render_top_bar()
+    st.html("<div style='height:8px'></div>")
     st.html('<div class="landing-brand">주문 업체 매칭</div>')
     st.html(
         '<p class="landing-desc">엽서·스티커·마스킹테이프 커스텀 제작 업체를<br>'
@@ -1614,14 +1682,7 @@ def render_step3():
 
 
 def render_match():
-    col_steps, col_gear = st.columns([9, 1])
-    with col_steps:
-        render_steps(st.session_state.match_step)
-    with col_gear:
-        with st.container(key="gear_wrap"):
-            if st.button("⚙️", key="nav_gear", help="환경 설정"):
-                st.session_state.page = "app_settings"
-                st.rerun()
+    render_top_bar(steps_current=st.session_state.match_step)
 
     if st.session_state.match_step == 1:
         render_step1()
