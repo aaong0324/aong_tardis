@@ -916,12 +916,14 @@ if st.session_state.page == "settings":
             sel_goods = st.multiselect("제작 가능 굿즈 종류", st.session_state.master_opts["아크릴굿즈종류"],
                                        default=v_data.get("제공굿즈종류", [st.session_state.master_opts["아크릴굿즈종류"][0]]))
 
-            st.markdown("### 3. 굿즈 종류별 구간 요금 스프레드시트 매트릭스")
+            st.markdown("### 3. 굿즈 종류별 사이즈 · 구간 요금 스프레드시트 매트릭스")
+            st.caption("굿즈 종류마다 취급하는 사이즈와 가격이 다르므로, 사이즈는 자유 입력(예: 5cm, 10x15cm)으로 행마다 따로 지정한다. "
+                       "같은 굿즈 종류라도 사이즈별로 여러 행을 추가하면 사이즈마다 다른 단가를 설정할 수 있다.")
             val_col_name = "조합적용단가(원)" if edit_pricing_rule == "옵션 조합별 단가 직접 설정" else "옵션추가금(원)"
 
             matrix_data = v_data.get("조합단가표", [])
             if not matrix_data and sel_goods:
-                matrix_data = [{"굿즈종류": sel_goods[0], "최소수량": 1, "최대수량": 50, val_col_name: 500}]
+                matrix_data = [{"굿즈종류": sel_goods[0], "사이즈": "", "최소수량": 1, "최대수량": 50, val_col_name: 500}]
             else:
                 for row in matrix_data:
                     if "적용값" in row: row[val_col_name] = row.pop("적용값")
@@ -930,13 +932,14 @@ if st.session_state.page == "settings":
                             if old_k in row and val_col_name != old_k: row[val_col_name] = row.pop(old_k)
 
             df_matrix = pd.DataFrame(matrix_data)
-            req_cols = ["굿즈종류", "최소수량", "최대수량", val_col_name]
+            req_cols = ["굿즈종류", "사이즈", "최소수량", "최대수량", val_col_name]
             for c in req_cols:
                 if c not in df_matrix.columns: df_matrix[c] = 0 if "수량" in c or "원" in c else ""
             df_matrix = df_matrix[req_cols]
 
             col_config = {
                 "굿즈종류": st.column_config.SelectboxColumn("굿즈 종류 선택", options=sel_goods, required=True),
+                "사이즈": st.column_config.TextColumn("사이즈 (자유 입력, 예: 5cm)", required=False),
                 "최소수량": st.column_config.NumberColumn("최소수량(개)", min_value=1, step=1, required=True),
                 "최대수량": st.column_config.NumberColumn("최대수량(개)", min_value=1, step=1, required=True),
                 val_col_name: st.column_config.NumberColumn(val_col_name, min_value=0, step=10, required=True)
@@ -963,6 +966,7 @@ if st.session_state.page == "settings":
                         for r in records:
                             clean_matrix.append({
                                 "굿즈종류": str(r.get("굿즈종류", "")),
+                                "사이즈": str(r.get("사이즈", "")).strip(),
                                 "최소수량": int(r.get("최소수량", 1)),
                                 "최대수량": int(r.get("최대수량", 1)),
                                 "적용값": int(r.get(val_col_name, 0))
@@ -1448,8 +1452,22 @@ def render_step2_acrylic():
     for v in vendors:
         all_goods.update(v.get("제공굿즈종류", []))
 
-    st.markdown("**제작할 굿즈 종류 및 수량**")
+    st.markdown("**제작할 굿즈 종류**")
     _pills("굿즈 종류", sorted(all_goods), "mc_ac_goods")
+
+    selected_goods = st.session_state.get("mc_ac_goods")
+    all_sizes = set()
+    for v in vendors:
+        for row in v.get("조합단가표", []):
+            if row.get("굿즈종류") == selected_goods and str(row.get("사이즈", "")).strip():
+                all_sizes.add(row["사이즈"])
+
+    if all_sizes:
+        st.markdown("**사이즈**")
+        _pills("사이즈", sorted(all_sizes), "mc_ac_size")
+    else:
+        st.session_state["mc_ac_size"] = None
+
     st.number_input("총 제작 수량 (개)", min_value=1, value=50, step=10, key="mc_ac_qty")
 
 
@@ -1764,7 +1782,7 @@ def calc_tape_results(user_type, user_w, user_h, total_qty, user_color, user_pac
     return sorted(results, key=lambda x: x["최종총가격"])
 
 
-def calc_acrylic_results(goods_type, total_qty):
+def calc_acrylic_results(goods_type, size, total_qty):
     vendors = st.session_state.vendors.get("아크릴", [])
     results = []
     for v in vendors:
@@ -1778,7 +1796,7 @@ def calc_acrylic_results(goods_type, total_qty):
         matched_val = 0
         found = False
         for row in matrix:
-            if row.get("굿즈종류") == goods_type:
+            if row.get("굿즈종류") == goods_type and str(row.get("사이즈", "")).strip() == (size or ""):
                 if row.get("최소수량", 1) <= total_qty <= row.get("최대수량", 999999):
                     matched_val = row.get("적용값", 0)
                     found = True
@@ -1800,6 +1818,8 @@ def calc_acrylic_results(goods_type, total_qty):
         final_total = print_total + ship_fee
 
         badges = [f"개당 {eff_unit:,}원", "무료배송" if ship_fee == 0 else f"배송비 {ship_fee:,}원"]
+        if size:
+            badges.insert(0, f"사이즈 {size}")
         badges.extend(_lead_badges(v))
 
         results.append({
@@ -1870,9 +1890,10 @@ def render_step3():
 
     elif product == "아크릴":
         goods_type = st.session_state.get("mc_ac_goods")
+        size = st.session_state.get("mc_ac_size")
         qty = st.session_state.get("mc_ac_qty", 50)
-        summary = f"{goods_type} · {qty:,}개"
-        results = calc_acrylic_results(goods_type, qty)
+        summary = f"{goods_type}" + (f" · {size}" if size else "") + f" · {qty:,}개"
+        results = calc_acrylic_results(goods_type, size, qty)
 
     else:
         size_w = st.session_state.get("mc_gen_w", 50)
