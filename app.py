@@ -133,7 +133,7 @@ def load_vendors():
             return data
         except Exception as e:
             log_error(f"구글 시트 업체 데이터 로드 실패: {str(e)}")
-            st.warning("구글 시트 연결에 실패해 로컬 데이터를 임시로 표시한다. 오류 로그를 확인하렴.")
+            st.warning("구글 시트 연결에 실패해 로컬 데이터를 임시로 표시합니다. 오류 로그를 확인해 주세요.")
     return load_json(DATA_FILE, DEFAULT_VENDORS)
 
 def save_vendors(data):
@@ -144,7 +144,7 @@ def save_vendors(data):
             return True
         except Exception as e:
             log_error(f"구글 시트 업체 데이터 저장 실패: {str(e)}")
-            st.error("구글 시트 저장에 실패했다. 오류 로그를 확인하렴.")
+            st.error("구글 시트 저장에 실패했습니다. 오류 로그를 확인해 주세요.")
             return False
     return save_json(DATA_FILE, data)
 
@@ -451,7 +451,7 @@ def load_image(uploaded_file):
             return Image.open(uploaded_file)
         elif file_name.endswith((".ai", ".pdf")):
             if not HAS_FITZ:
-                st.error("AI 또는 PDF 파일을 화면에 보려면 터미널에서 'python -m pip install pymupdf'를 설치해야 한다.")
+                st.error("AI 또는 PDF 파일을 화면에서 보려면 터미널에서 'python -m pip install pymupdf'를 설치해야 합니다.")
                 return None
             file_bytes = uploaded_file.read()
             doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -460,7 +460,7 @@ def load_image(uploaded_file):
             return Image.open(io.BytesIO(pix.tobytes("png")))
     except Exception as e:
         log_error(f"도안 변환 오류: {str(e)}\n{traceback.format_exc()}")
-        st.error("도안을 읽는 중 문제가 발생. 오류 로그를 확인.")
+        st.error("도안을 읽는 중 문제가 발생했습니다. 오류 로그를 확인해 주세요.")
     return None
 
 # ==========================================
@@ -476,9 +476,9 @@ if st.session_state.page == "settings":
             st.rerun()
 
     if get_gsheet_worksheet() is not None:
-        st.caption("🔗 구글 시트 연동 중 — 여기서 등록/수정한 업체 데이터는 모든 사용자에게 공유된다.")
+        st.caption("🔗 구글 시트 연동 중 — 여기서 등록·수정한 업체 데이터는 모든 사용자에게 공유됩니다.")
     else:
-        st.caption("⚠️ 구글 시트 미연동 — 업체 데이터가 이 서버의 로컬 파일에만 저장되어 다른 사용자와 공유되지 않는다. (README 참고)")
+        st.caption("⚠️ 구글 시트 미연동 — 업체 데이터가 이 서버의 로컬 파일에만 저장되어 다른 사용자와 공유되지 않습니다. (README 참고)")
 
     st.markdown("---")
 
@@ -486,12 +486,12 @@ if st.session_state.page == "settings":
 
     with tab2:
         st.subheader("상품별 인쇄 업체 맞춤 설정 및 마스터 관리")
-        st.write("엽서, 스티커, 마스킹테이프 등 각 상품 군에 맞는 정밀 공정을 정의하고 업체 데이터를 제어하는 콘솔이다.")
+        st.write("엽서, 스티커, 마스킹테이프 등 각 상품군에 맞는 공정을 정의하고 업체 데이터를 관리하는 화면입니다.")
 
         if get_gsheet_worksheet() is not None:
             if st.button("🔄 구글 시트에서 최신 업체 데이터 새로고침 (다른 사용자가 등록한 내용 반영)"):
                 st.session_state.vendors = load_vendors()
-                st.success("구글 시트의 최신 업체 데이터를 반영했다.")
+                st.success("구글 시트의 최신 업체 데이터를 반영했습니다.")
                 st.rerun()
 
         with st.expander("전체 공용 마스터 재료/공정 풀 추가 (카테고리별 목록 확장)", expanded=False):
@@ -506,10 +506,10 @@ if st.session_state.page == "settings":
                             st.session_state.master_opts[target_cat] = []
                         st.session_state.master_opts[target_cat].append(new_val)
                         save_json(MASTER_OPT_FILE, st.session_state.master_opts)
-                        st.success(f"[{new_val}] 항목이 성공적으로 등록되었다.")
+                        st.success(f"[{new_val}] 항목이 등록되었습니다.")
                         st.rerun()
                     else:
-                        st.warning("이미 존재하거나 입력값이 비어 있다.")
+                        st.warning("이미 있는 항목이거나 입력값이 비어 있습니다.")
                         
             st.write("현재 등록된 마스터 풀 현황:")
             for k, v_list in st.session_state.master_opts.items():
@@ -519,9 +519,9 @@ if st.session_state.page == "settings":
         
         prod_list = product_categories()
         if not prod_list:
-            st.warning("등록된 상품 카테고리가 없다. 아래에서 먼저 상품군을 추가하렴.")
+            st.warning("등록된 상품 카테고리가 없습니다. 아래에서 먼저 상품군을 추가해 주세요.")
 
-        with st.expander("➕ 새 상품군 추가 (아크릴키링·코롯토처럼 단가표가 다른 굿즈는 여기서 따로 만든다)"):
+        with st.expander("➕ 새 상품군 추가 (아크릴키링·코롯토처럼 단가표가 다른 굿즈는 여기서 따로 만듭니다)"):
             np_col1, np_col2 = st.columns([2, 3])
             with np_col1:
                 new_prod_name = st.text_input("상품군 이름", placeholder="예: 아크릴키링")
@@ -530,22 +530,22 @@ if st.session_state.page == "settings":
                     "입력 양식 선택",
                     list(CATEGORY_TYPE_LABELS.values()),
                     index=0,
-                    help="굿즈 종류와 사이즈마다 단가가 다르면 '사이즈별 단가표'를 고르렴.",
+                    help="굿즈 종류와 사이즈마다 단가가 다르면 '사이즈별 단가표'를 선택하세요.",
                 )
             if st.button("이 상품군 추가", type="primary"):
                 name = new_prod_name.strip()
                 if not name:
-                    st.warning("상품군 이름을 입력하렴.")
+                    st.warning("상품군 이름을 입력해 주세요.")
                 elif name in st.session_state.vendors:
-                    st.warning(f"[{name}] 상품군은 이미 있다.")
+                    st.warning(f"[{name}] 상품군은 이미 있습니다.")
                 elif name == META_KEY:
-                    st.warning("사용할 수 없는 이름이다.")
+                    st.warning("사용할 수 없는 이름입니다.")
                 else:
                     ctype = next(k for k, v in CATEGORY_TYPE_LABELS.items() if v == new_type_label)
                     st.session_state.vendors[name] = []
                     set_category_type(name, ctype)
                     if save_vendors(st.session_state.vendors):
-                        st.success(f"[{name}] 상품군이 추가되었다. 아래에서 선택해 업체를 등록하렴.")
+                        st.success(f"[{name}] 상품군이 추가되었습니다. 아래에서 선택해 업체를 등록하세요.")
                         st.rerun()
 
         if not prod_list:
@@ -659,7 +659,7 @@ if st.session_state.page == "settings":
                         type_lbl_config[t] = exist_t
 
             st.markdown("### 4. 포장 방식별 최소/최대 수량 단가 스프레드시트 매트릭스")
-            st.write("해당 업체가 제공하는 포장 방식별 구간 요금 구조입니다. 추가, 수정, 삭제가 자유롭습니다.")
+            st.write("해당 업체가 제공하는 포장 방식별 구간 요금표입니다. 행 추가·수정·삭제가 가능합니다.")
             
             matrix_data = v_data.get("조합단가표", [])
             val_col_name = "단가(원)"
@@ -697,12 +697,12 @@ if st.session_state.page == "settings":
                     if st.button("이 마테 업체 삭제"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
-                        st.success("업체가 성공적으로 삭제되었다.")
+                        st.success("업체가 삭제되었습니다.")
                         st.rerun()
             with btn_col2:
                 if st.button("마스킹 테이프 설정 및 단가 매트릭스 최종 저장"):
                     if not edit_name.strip() or not edit_prod.strip():
-                        st.warning("업체명과 상품명을 확실히 기입하렴.")
+                        st.warning("업체명과 상품명을 모두 입력해 주세요.")
                     else:
                         records = edited_matrix.to_dict(orient="records")
                         clean_matrix = []
@@ -742,12 +742,12 @@ if st.session_state.page == "settings":
                             st.session_state.vendors[target_prod][v_index] = updated_v
 
                         if save_vendors(st.session_state.vendors):
-                            st.success(f"[{edit_name} - {edit_prod}] 마스킹 테이프 시스템 정보가 완벽하게 저장되어 마스터 표에 등재되었다.")
+                            st.success(f"[{edit_name} - {edit_prod}] 마스킹 테이프 정보가 저장되었습니다.")
                             st.rerun()
 
             st.markdown("---")
             st.markdown("### 5. 등록된 마스킹 테이프 업체 마스터 리스트 표")
-            st.write("등록 완료되거나 새로 추가된 모든 마스킹 테이프 업체의 핵심 마스터 리스트가 한눈에 정렬된다.")
+            st.write("등록된 마스킹 테이프 업체의 핵심 정보를 한눈에 보여줍니다.")
             
             mt_summary = []
             for v in current_vendors:
@@ -773,7 +773,7 @@ if st.session_state.page == "settings":
             if mt_summary:
                 st.dataframe(pd.DataFrame(mt_summary), use_container_width=True)
             else:
-                st.info("등록된 마스킹 테이프 업체가 없다.")
+                st.info("등록된 마스킹 테이프 업체가 없습니다.")
 
         # ==========================================================
         # [분기 2] 엽서 정밀 설정 콘솔
@@ -862,7 +862,7 @@ if st.session_state.page == "settings":
                 edit_min_w, edit_min_h, edit_max_w, edit_max_h = 0, 0, 0, 0
 
             st.markdown("### 4. 엽서 후가공 옵션 및 복합 추가금 관리 (기본 세팅비 + 수량당 추가금)")
-            st.caption("후가공명:기본추가금:수량당추가금 형태로 쉼표로 구분하여 입력한다. 예: 귀돌이(라운딩):3000:10, 금박(유광):15000:50, 형압:20000:0")
+            st.caption("후가공명:기본추가금:수량당추가금 형태로 쉼표로 구분해 입력합니다. 예: 귀돌이(라운딩):3000:10, 금박(유광):15000:50, 형압:20000:0")
             
             post_dict = v_data.get("후가공목록", {"귀돌이(라운딩)": {"기본": 3000, "수량당": 10}})
             post_str_list = []
@@ -932,12 +932,12 @@ if st.session_state.page == "settings":
                     if st.button("이 엽서 업체 삭제"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
-                        st.success("엽서 업체가 삭제되었다.")
+                        st.success("엽서 업체가 삭제되었습니다.")
                         st.rerun()
             with btn_col2:
                 if st.button("엽서 설정 최종 저장 및 표에 등록"):
                     if not edit_name.strip() or not edit_prod.strip():
-                        st.warning("업체명과 상품명을 모두 입력해야 한다.")
+                        st.warning("업체명과 상품명을 모두 입력해야 합니다.")
                     else:
                         records = edited_matrix.to_dict(orient="records")
                         clean_matrix = []
@@ -965,12 +965,12 @@ if st.session_state.page == "settings":
                         else: st.session_state.vendors[target_prod][v_index] = updated_v
 
                         if save_vendors(st.session_state.vendors):
-                            st.success(f"[{edit_name} - {edit_prod}] 엽서 정책이 완벽하게 등록되어 하단 표에 적용되었다.")
+                            st.success(f"[{edit_name} - {edit_prod}] 엽서 설정이 저장되었습니다.")
                             st.rerun()
 
             st.markdown("---")
             st.markdown("### 6. 등록된 엽서 업체 마스터 리스트 표")
-            st.write("설정된 엽서 업체의 인쇄 방식, 도수, 여백 공차 규격 및 과금 기준이 한눈에 정렬된다.")
+            st.write("등록된 엽서 업체의 인쇄 방식, 도수, 여백 규격, 과금 기준을 한눈에 보여줍니다.")
             
             post_summary = []
             for v in current_vendors:
@@ -983,7 +983,7 @@ if st.session_state.page == "settings":
                     "제작기간": v.get("제작기간", "-"), "빠른배송": v.get("빠른배송가능", "불가능")
                 })
             if post_summary: st.dataframe(pd.DataFrame(post_summary), use_container_width=True)
-            else: st.info("등록된 엽서 업체가 없다.")
+            else: st.info("등록된 엽서 업체가 없습니다.")
 
         # ==========================================================
         # [분기 3] 사이즈별 단가표 콘솔 (아크릴 굿즈 등)
@@ -1019,9 +1019,9 @@ if st.session_state.page == "settings":
 
             st.markdown("### 2. 세부 종류 · 사이즈 · 수량 구간 정의")
             st.caption(
-                "업체 페이지의 단가표를 그대로 옮기면 된다. 예를 들어 아크릴키링이라면 세부 종류에 "
-                "'투명 / 하프미러 / 글리터 / 자개'를, 사이즈에 '20x20 / 30x15 / …'를 적는다. "
-                "여기서 정의한 값이 아래 단가표의 행과 열이 된다."
+                "업체 페이지의 단가표를 그대로 옮기면 됩니다. 예를 들어 아크릴키링이라면 세부 종류에 "
+                "'투명 / 하프미러 / 글리터 / 자개'를, 사이즈에 '20x20 / 30x15 / …'를 입력합니다. "
+                "여기서 입력한 값이 아래 단가표의 행과 열이 됩니다."
             )
             dc1, dc2 = st.columns(2)
             with dc1:
@@ -1053,11 +1053,11 @@ if st.session_state.page == "settings":
             st.markdown("### 3. 종류별 사이즈 × 수량 단가표")
             edited_tables = {}
             if not sel_types or not sel_sizes or not qty_ranges:
-                st.info("위에서 세부 종류 · 사이즈 · 수량 구간을 모두 입력하면 단가표가 나타난다.")
+                st.info("위에서 세부 종류 · 사이즈 · 수량 구간을 모두 입력하면 단가표가 나타납니다.")
             else:
                 st.caption(
-                    "칸에 개당 단가(원)를 넣으렴. **0으로 두면 그 사이즈는 취급하지 않는 것으로 처리된다.** "
-                    "업체 사이트 표에서 숫자 영역을 복사해 붙여넣을 수도 있다."
+                    "칸에 개당 단가(원)를 입력하세요. **0으로 두면 해당 사이즈는 취급하지 않는 것으로 처리됩니다.** "
+                    "업체 사이트 표에서 숫자 영역을 복사해 붙여넣을 수도 있습니다."
                 )
                 existing = {
                     (r.get("종류"), r.get("사이즈"), r.get("최소수량"), r.get("최대수량")): r.get("단가", 0)
@@ -1090,14 +1090,14 @@ if st.session_state.page == "settings":
                     if st.button("이 업체 삭제"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
-                        st.success("업체가 삭제되었다.")
+                        st.success("업체가 삭제되었습니다.")
                         st.rerun()
             with btn_col2:
                 if st.button("업체 설정 및 단가표 최종 저장"):
                     if not edit_name.strip():
-                        st.warning("업체 이름을 반드시 입력해야 한다.")
+                        st.warning("업체 이름을 반드시 입력해야 합니다.")
                     elif not edited_tables:
-                        st.warning("세부 종류 · 사이즈 · 수량 구간을 먼저 입력해야 저장할 수 있다.")
+                        st.warning("세부 종류 · 사이즈 · 수량 구간을 먼저 입력해야 저장할 수 있습니다.")
                     else:
                         label_to_range = {qty_range_label(lo, hi): (lo, hi) for lo, hi in qty_ranges}
                         clean_matrix = []
@@ -1119,7 +1119,7 @@ if st.session_state.page == "settings":
                                         })
 
                         if not clean_matrix:
-                            st.warning("단가가 모두 0이라 저장할 내용이 없다. 최소 한 칸은 채우렴.")
+                            st.warning("단가가 모두 0이라 저장할 내용이 없습니다. 최소 한 칸은 입력해 주세요.")
                         else:
                             updated_v = {
                                 "업체명": edit_name.strip(), "상품명": edit_prod.strip(),
@@ -1158,7 +1158,7 @@ if st.session_state.page == "settings":
             if sm_summary:
                 st.dataframe(pd.DataFrame(sm_summary), use_container_width=True)
             else:
-                st.info("등록된 업체가 없다.")
+                st.info("등록된 업체가 없습니다.")
 
         # ==========================================================
         # [분기 4] 스티커 및 기타 일반 상품 설정 콘솔
@@ -1264,11 +1264,11 @@ if st.session_state.page == "settings":
                     if st.button("이 업체 삭제"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
-                        st.success("업체가 삭제되었다.")
+                        st.success("업체가 삭제되었습니다.")
                         st.rerun()
             with btn_col2:
                 if st.button("업체 설정 및 조합 단가 매트릭스 최종 저장"):
-                    if not edit_name.strip(): st.warning("업체 이름을 반드시 입력해야 한다.")
+                    if not edit_name.strip(): st.warning("업체 이름을 반드시 입력해야 합니다.")
                     else:
                         records = edited_matrix.to_dict(orient="records")
                         clean_matrix = []
@@ -1303,7 +1303,7 @@ if st.session_state.page == "settings":
                         else: st.session_state.vendors[target_prod][v_index] = updated_v
 
                         if save_vendors(st.session_state.vendors):
-                            st.success(f"[{edit_name}] 업체 설정이 완벽하게 저장되었다.")
+                            st.success(f"[{edit_name}] 업체 설정이 저장되었습니다.")
                             st.rerun()
 
             st.markdown("---")
@@ -1322,7 +1322,7 @@ if st.session_state.page == "settings":
                     "제작기간": v.get("제작기간", "-"), "빠른배송": v.get("빠른배송가능", "불가능")
                 })
             if summary_rows: st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
-            else: st.info("등록된 업체가 없다.")
+            else: st.info("등록된 업체가 없습니다.")
 
 # ==========================================
 # [화면 1-2] 환경 설정 (화면 구성 · 오류 로그)
@@ -1342,7 +1342,7 @@ elif st.session_state.page == "app_settings":
 
     with tab1:
         st.subheader("화면 색상 및 버튼 스타일 설정")
-        st.write("업체 찾기 화면의 강조 색상과 버튼 모양을 조작 및 적용.")
+        st.write("업체 찾기 화면의 강조 색상과 버튼 모양을 설정합니다.")
 
         col_c1, col_c2 = st.columns(2)
         with col_c1:
@@ -1356,7 +1356,7 @@ elif st.session_state.page == "app_settings":
             st.session_state.config["button_style"] = "default" if "default" in new_style else "round"
 
             if save_json(CONFIG_FILE, st.session_state.config):
-                st.success("화면 설정이 완벽하게 저장되고 메인 시스템에 적용되었다.")
+                st.success("화면 설정이 저장되어 바로 적용되었습니다.")
                 st.rerun()
 
     with tab2:
@@ -1369,7 +1369,7 @@ elif st.session_state.page == "app_settings":
                 os.remove(LOG_FILE)
                 st.rerun()
         else:
-            st.info("현재 기록된 시스템 오류가 없다.")
+            st.info("현재 기록된 시스템 오류가 없습니다.")
 
 # ==========================================
 # [화면 1-3] 사용 방법 · 업데이트 노트
@@ -1396,7 +1396,8 @@ elif st.session_state.page == "info":
 
 ##### 2. 업체 등록
 랜딩 화면에서 **업체 등록**을 누르면 관리 콘솔로 이동합니다. 여기서 상품 카테고리별로 업체와
-단가표(용지·접착·후지·코팅 조합, 수량 구간별 가격 등)를 등록·수정할 수 있습니다.
+단가표를 등록·수정할 수 있습니다. 상품군을 새로 만들 때 입력 양식을 고를 수 있으며,
+아크릴 굿즈처럼 종류·사이즈마다 단가가 다르면 **사이즈별 단가표**를 선택하시면 됩니다.
 
 ##### 3. 여러 사람과 데이터 공유
 구글 시트 연동이 되어 있으면, 관리 콘솔에서 등록·수정한 업체 데이터가 이 앱을 쓰는 모든 사용자에게
@@ -1449,7 +1450,7 @@ def render_landing():
             st.html(
                 '<div class="ec-num">01</div>'
                 '<div class="ec-title">업체 찾기</div>'
-                '<div class="ec-desc">원하는 옵션을 고르면 가장 잘 맞는 업체를 최저가 순으로 보여드려요.</div>')
+                '<div class="ec-desc">원하는 옵션을 고르시면 가장 잘 맞는 업체를 최저가 순으로 보여 드립니다.</div>')
             if st.button("시작하기 →", key="entry_match", type="primary", use_container_width=True):
                 st.session_state.page = "match"
                 st.session_state.match_step = 1
@@ -1460,7 +1461,7 @@ def render_landing():
             st.html(
                 '<div class="ec-num">02</div>'
                 '<div class="ec-title">업체 등록</div>'
-                '<div class="ec-desc">새 제작 업체의 취급 제품과 옵션, 단가 정보를 등록해요.</div>')
+                '<div class="ec-desc">새 제작 업체의 취급 제품과 옵션, 단가 정보를 등록합니다.</div>')
             if st.button("등록하기 →", key="entry_admin", type="primary", use_container_width=True):
                 st.session_state.page = "settings"
                 st.rerun()
@@ -1480,11 +1481,11 @@ def render_steps(current):
 
 def render_step1():
     st.html('<h2 class="step-title">어떤 제품을 만드시나요?</h2>')
-    st.caption("제품을 먼저 고르면, 그에 맞는 옵션을 물어봐요.")
+    st.caption("제품을 먼저 고르시면, 그에 맞는 옵션을 안내해 드립니다.")
 
     products = product_categories()
     if not products:
-        st.warning("등록된 상품 카테고리가 없다. 업체 등록 화면에서 상품을 먼저 추가하렴.")
+        st.warning("등록된 상품 카테고리가 없습니다. 업체 등록 화면에서 상품을 먼저 추가해 주세요.")
         return
 
     cols = st.columns(min(3, len(products)))
@@ -1636,7 +1637,7 @@ def render_step2():
         return
 
     st.html(f'<h2 class="step-title">{esc(product)} 옵션</h2>')
-    st.caption("원하는 조건을 골라 주세요. 이 조건과 가장 잘 맞는 업체를 찾아드려요.")
+    st.caption("원하는 조건을 골라 주세요. 이 조건과 가장 잘 맞는 업체를 찾아 드립니다.")
 
     with st.expander("디자인 도안 미리보기 (선택)"):
         uploaded_file = st.file_uploader(
@@ -2068,7 +2069,7 @@ def render_step3():
     else:
         for i, r in enumerate(results):
             render_vendor_card(i + 1, r)
-        st.success(f"최저가 1위는 [{results[0]['업체명']}]이며, 최종 결제액은 {results[0]['최종총가격']:,}원이다.")
+        st.success(f"최저가 1위는 [{results[0]['업체명']}]이며, 최종 결제액은 {results[0]['최종총가격']:,}원입니다.")
 
     st.html("<div style='height:8px'></div>")
     nc1, nc2 = st.columns(2)
