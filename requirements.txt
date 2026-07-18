@@ -4,6 +4,3 @@ pillow
 pymupdf
 gspread
 google-auth
-anthropic
-requests
-beautifulsoup4
