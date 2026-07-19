@@ -29,6 +29,7 @@ CONFIG_FILE = "config.json"
 MASTER_OPT_FILE = "master_options.json"
 LOG_FILE = "error_log.txt"
 GSHEET_WORKSHEET_NAME = "vendors"
+GSHEET_MASTER_WORKSHEET = "master_options"
 
 # 업체 데이터 dict 안에서 카테고리 이름이 아닌, 앱 설정을 담는 예약 키.
 # 카테고리 목록을 뽑을 때는 반드시 product_categories()를 써서 이 키를 걸러내야 한다.
@@ -101,6 +102,59 @@ def get_gsheet_worksheet():
     except Exception as e:
         log_error(f"구글 시트 연결 실패: {str(e)}")
         return None
+
+@st.cache_resource(show_spinner=False)
+def get_master_worksheet():
+    """마스터 옵션을 저장할 시트 탭. 로컬 파일은 재배포 때 초기화되므로 여기에도 같이 둔다."""
+    if not HAS_GSPREAD:
+        return None
+    try:
+        if "gcp_service_account" not in st.secrets or "SHEET_URL" not in st.secrets:
+            return None
+        creds = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(creds)
+        sh = client.open_by_url(st.secrets["SHEET_URL"])
+        try:
+            return sh.worksheet(GSHEET_MASTER_WORKSHEET)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=GSHEET_MASTER_WORKSHEET, rows=10, cols=2)
+            ws.append_row(["항목", "데이터"])
+            return ws
+    except st.errors.StreamlitSecretNotFoundError:
+        return None
+    except Exception as e:
+        log_error(f"마스터 옵션 시트 연결 실패: {str(e)}")
+        return None
+
+
+def load_master_from_sheet():
+    ws = get_master_worksheet()
+    if ws is None:
+        return None
+    try:
+        for row in ws.get_all_values()[1:]:
+            if len(row) >= 2 and row[0] == "master_options":
+                return json.loads(row[1])
+    except Exception as e:
+        log_error(f"마스터 옵션 시트 읽기 실패: {str(e)}")
+    return None
+
+
+def save_master_to_sheet(data):
+    ws = get_master_worksheet()
+    if ws is None:
+        return False
+    try:
+        ws.clear()
+        ws.update([["항목", "데이터"], ["master_options", json.dumps(data, ensure_ascii=False)]])
+        return True
+    except Exception as e:
+        log_error(f"마스터 옵션 시트 저장 실패: {str(e)}")
+        return False
+
 
 def admin_password():
     """관리자 암호를 secrets에서 읽는다. 설정하지 않았으면 None."""
@@ -468,6 +522,51 @@ def migrate_master_opts(opts):
     return opts
 
 
+# 업체 데이터의 '제공OO' 항목이 어느 마스터 목록에서 온 것인지 짝지어 둔다.
+VENDOR_FIELD_TO_MASTER = {
+    "스티커": {
+        "제공용지": "스티커 용지", "제공접착": "스티커 접착",
+        "제공후지": "스티커 후지", "제공코팅": "스티커 코팅",
+    },
+    "엽서": {
+        "제공용지": "엽서용지", "제공인쇄방식": "인쇄방식",
+        "제공인쇄도수": "인쇄도수", "제공고정사이즈": "고정사이즈",
+    },
+    "마스킹 테이프": {
+        "제공타입": "마테타입", "제공가로": "마테가로", "제공세로": "마테세로",
+        "제공도수": "마테도수", "제공포장": "마테포장",
+    },
+}
+
+
+def master_opts_from_vendors(vendors):
+    """등록된 업체가 실제로 쓰고 있는 재료를 긁어모은다."""
+    found = {}
+    for cat, field_map in VENDOR_FIELD_TO_MASTER.items():
+        for v in vendors.get(cat, []) or []:
+            if not isinstance(v, dict):
+                continue
+            for field, master_cat in field_map.items():
+                for item in as_list(v.get(field)):
+                    items = found.setdefault(master_cat, [])
+                    if item not in items:
+                        items.append(item)
+    return found
+
+
+def heal_master_opts(opts, vendors):
+    """업체가 쓰고 있는데 마스터 목록에 없는 재료를 되살린다.
+    목록 파일이 초기화되어도 사용 중인 항목은 이걸로 자동 복구된다."""
+    restored = []
+    for cat, items in master_opts_from_vendors(vendors).items():
+        cur = opts.setdefault(cat, [])
+        for item in items:
+            if item not in cur:
+                cur.append(item)
+                restored.append(f"{cat} · {item}")
+    return opts, restored
+
+
 def master_list(cat):
     """마스터 목록을 돌려준다. 카테고리가 없으면 빈 목록."""
     return st.session_state.master_opts.get(cat, [])
@@ -606,6 +705,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-20", "note": "공용 재료 목록을 구글 시트에도 저장 — 재배포해도 초기화되지 않습니다. 목록이 비어 있으면 등록된 업체가 쓰는 재료로 자동 복구합니다"},
     {"date": "2026-07-20", "note": "삭제 기능에 관리자 잠금 추가 — 관리자 암호를 설정하면 업체·상품군·공용 재료 삭제는 암호를 아는 사람만 할 수 있습니다 (등록과 수정은 그대로)"},
     {"date": "2026-07-19", "note": "엽서·마스킹 테이프 단가표도 가로형으로 통일 — 수량 구간별 입력, 단위 지정, 할인(음수) 입력 지원"},
     {"date": "2026-07-19", "note": "단가표 옵션 칸에서 여러 항목을 한 줄로 묶기 — 단가가 같은 용지·접착·후지 등을 함께 골라 줄 수를 줄이고, 비워두면 전체에 적용"},
@@ -625,7 +725,19 @@ if "vendors" not in st.session_state:
 if "config" not in st.session_state:
     st.session_state.config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
 if "master_opts" not in st.session_state:
-    st.session_state.master_opts = migrate_master_opts(load_json(MASTER_OPT_FILE, dict(DEFAULT_MASTER_OPTIONS)))
+    # 구글 시트 → 로컬 파일 → 기본값 순으로 찾는다.
+    # (로컬 파일은 재배포 때 초기화되므로 시트에 있으면 그쪽을 믿는다.)
+    _mo = load_master_from_sheet()
+    if _mo is None:
+        _mo = load_json(MASTER_OPT_FILE, dict(DEFAULT_MASTER_OPTIONS))
+    _mo = migrate_master_opts(_mo)
+    # 목록이 날아갔더라도 업체가 쓰고 있는 재료는 되살린다.
+    _mo, _restored = heal_master_opts(_mo, st.session_state.vendors)
+    st.session_state.master_opts = _mo
+    st.session_state.master_restored = _restored
+    if _restored:
+        save_json(MASTER_OPT_FILE, _mo)
+        save_master_to_sheet(_mo)
 if "page" not in st.session_state:
     st.session_state.page = "landing"       # landing | match | settings
 if "match_step" not in st.session_state:
@@ -774,6 +886,13 @@ if st.session_state.page == "settings":
     else:
         st.caption("⚠️ 구글 시트 미연동 — 업체 데이터가 이 서버의 로컬 파일에만 저장되어 다른 사용자와 공유되지 않습니다. (README 참고)")
 
+    if st.session_state.get("master_restored"):
+        _r = st.session_state.master_restored
+        st.info(
+            f"🔧 공용 재료 목록이 비어 있어, 등록된 업체가 쓰고 있던 항목 {len(_r)}개를 되살렸습니다.\n\n"
+            + ", ".join(_r[:20]) + (" 외" if len(_r) > 20 else "")
+        )
+
     render_admin_lock()
 
     st.markdown("---")
@@ -869,7 +988,9 @@ if st.session_state.page == "settings":
                         st.info("변경된 내용이 없습니다.")
                     else:
                         st.session_state.master_opts[target_cat] = new_items
-                        if save_json(MASTER_OPT_FILE, st.session_state.master_opts):
+                        saved_local = save_json(MASTER_OPT_FILE, st.session_state.master_opts)
+                        saved_sheet = save_master_to_sheet(st.session_state.master_opts)
+                        if saved_local or saved_sheet:
                             st.success(f"[{target_cat}] 목록을 저장했습니다. (추가 {len(added)}개 · 삭제 {len(removed)}개)")
                             st.rerun()
 
