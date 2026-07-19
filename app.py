@@ -230,6 +230,37 @@ def parse_qty_ranges(text):
 def qty_range_label(lo, hi):
     return f"{lo}개 이상" if hi >= 999999 else f"{lo}~{hi}개"
 
+
+def with_particle(word, has_batchim, no_batchim):
+    """받침 유무에 따라 조사를 붙인다. (예: 추가금'을' / 단가'를')"""
+    if not word:
+        return word
+    last = word[-1]
+    if "가" <= last <= "힣":
+        return word + (has_batchim if (ord(last) - 0xAC00) % 28 else no_batchim)
+    return word + no_batchim
+
+
+# ── 단가 적용 단위 ──
+# 개당/판당: 수량만큼 곱해서 더한다. 건당: 주문 1건에 한 번만 더한다.
+def price_unit_options(charge_mode):
+    return ["판당", "건당"] if charge_mode == "1판 자유 배치" else ["개당", "건당"]
+
+
+def default_price_unit(charge_mode, pricing_rule):
+    """단위 항목이 없던 예전 데이터의 기본값. 기존 계산 결과와 똑같이 나오도록 맞춘다."""
+    if charge_mode == "1판 자유 배치":
+        return "건당" if pricing_rule == "기준단가 + 옵션 추가금 합산" else "판당"
+    return "개당"
+
+
+def apply_price_unit(value, unit, req_qty, sheets_needed):
+    if unit == "개당":
+        return req_qty * value
+    if unit == "판당":
+        return sheets_needed * value
+    return value  # 건당
+
 # 기본 마스터 옵션 풀 (스티커, 엽서, 마스킹 테이프 공용 목록)
 DEFAULT_MASTER_OPTIONS = {
     "스티커 용지": ["일반아트지", "고급유포지", "투명데드롱", "모조지 220g", "크라프트지", "랑데부 240g", "특수홀로그램"],
@@ -418,6 +449,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-19", "note": "조합 단가표를 가로형으로 개편 — 한 조합에 수량 구간별 단가를 나란히 입력, 단가에 개당/판당/건당 단위 지정 가능"},
     {"date": "2026-07-19", "note": "스티커 업체에 칼선·재단 규격 입력 추가 (최소 재단 크기, 칼선 간격, 색상, 굵기) — 검색 결과에 도안 가이드로 표시"},
     {"date": "2026-07-19", "note": "공용 재료·공정 목록에 삭제 기능 추가, 용지/접착/후지/코팅을 '스티커 용지' 등으로 이름 정리"},
     {"date": "2026-07-18", "note": "상품군마다 입력 양식 선택 가능 — 아크릴키링·코롯토처럼 종류/사이즈별 단가표가 다른 굿즈는 각각 상품군으로 추가"},
@@ -1547,35 +1579,79 @@ if st.session_state.page == "settings":
                     sel_coats = safe_multiselect("코팅", "스티커 코팅", v_data.get("제공코팅"))
 
             st.markdown("### 7. 구간별 조합 단가표")
-            val_col_name = "옵션추가금(원)" if edit_pricing_rule == "기준단가 + 옵션 추가금 합산" else "조합적용단가(원)"
+            is_surcharge = (edit_pricing_rule == "기준단가 + 옵션 추가금 합산")
+            val_label = "옵션 추가금" if is_surcharge else "조합 단가"
+            unit_opts = price_unit_options(edit_mode)
+            def_unit = default_price_unit(edit_mode, edit_pricing_rule)
 
-            matrix_data = v_data.get("조합단가표", [])
-            if not matrix_data and sel_papers and sel_glues and sel_backs and sel_coats:
-                matrix_data = [{"용지": sel_papers[0], "접착": sel_glues[0], "후지": sel_backs[0], "코팅": sel_coats[0], "최소수량": 1, "최대수량": 100, val_col_name: 0}]
+            st.caption(
+                f"**조합 하나를 한 줄에 적고, 수량 구간별 {with_particle(val_label, '을', '를')} "
+                "옆으로 채우면 됩니다.** 같은 조합에 구간을 여러 개 만들려고 줄을 반복할 필요가 없습니다. "
+                "빈 칸은 그 구간을 취급하지 않는 것으로 처리되고, 0은 금액 0원으로 저장됩니다."
+            )
+
+            saved_rows = v_data.get("조합단가표", [])
+            existing_ranges = sorted({
+                (int(r.get("최소수량", 1)), int(r.get("최대수량", 999999))) for r in saved_rows
+            }) if saved_rows else []
+            qty_default = ", ".join(f"{a}-{b}" for a, b in existing_ranges) or "1-99, 100-499, 500-999"
+
+            gen_qty_text = st.text_input(
+                "수량 구간 — 쉼표로 구분", value=qty_default, key="gen_qty_ranges",
+                help="'1000+' 처럼 적으면 1000개 이상을 뜻합니다.",
+            )
+            gen_ranges = parse_qty_ranges(gen_qty_text)
+            range_cols = [qty_range_label(lo, hi) for lo, hi in gen_ranges]
+
+            edited_matrix = None
+            if not gen_ranges:
+                st.warning("수량 구간을 하나 이상 입력해야 단가표가 나타납니다.")
+            elif not (sel_papers and sel_glues and sel_backs and sel_coats):
+                st.warning("위 '취급 재료'에서 용지·접착·후지·코팅을 각각 하나 이상 선택해야 합니다.")
             else:
-                for row in matrix_data:
-                    if "적용값" in row: row[val_col_name] = row.pop("적용값")
-                    else:
-                        for old_k in ["옵션추가금(원)", "조합적용단가(원)", "구간판작업추가금(원)", "구간장당적용단가(원)"]:
-                            if old_k in row and val_col_name != old_k: row[val_col_name] = row.pop(old_k)
+                # 저장된 긴 형식(조합×구간 한 줄씩)을 조합 단위로 묶어 가로형 표로 만든다.
+                combo_order, price_map = [], {}
+                for r in saved_rows:
+                    key = (
+                        str(r.get("용지", "")), str(r.get("접착", "")),
+                        str(r.get("후지", "")), str(r.get("코팅", "")),
+                        str(r.get("단위") or def_unit),
+                    )
+                    if key not in combo_order:
+                        combo_order.append(key)
+                    price_map[(key, int(r.get("최소수량", 1)), int(r.get("최대수량", 999999)))] = r.get("적용값", 0)
 
-            df_matrix = pd.DataFrame(matrix_data)
-            req_cols = ["용지", "접착", "후지", "코팅", "최소수량", "최대수량", val_col_name]
-            for c in req_cols:
-                if c not in df_matrix.columns: df_matrix[c] = 0 if "수량" in c or "원" in c else ""
-            df_matrix = df_matrix[req_cols]
+                if not combo_order:
+                    combo_order = [(sel_papers[0], sel_glues[0], sel_backs[0], sel_coats[0], def_unit)]
 
-            col_config = {
-                "용지": st.column_config.SelectboxColumn("용지 선택", options=sel_papers, required=True),
-                "접착": st.column_config.SelectboxColumn("접착 선택", options=sel_glues, required=True),
-                "후지": st.column_config.SelectboxColumn("후지 선택", options=sel_backs, required=True),
-                "코팅": st.column_config.SelectboxColumn("코팅 선택", options=sel_coats, required=True),
-                "최소수량": st.column_config.NumberColumn("최소수량(판/장)", min_value=1, step=1, required=True),
-                "최대수량": st.column_config.NumberColumn("최대수량(판/장)", min_value=1, step=1, required=True),
-                val_col_name: st.column_config.NumberColumn(val_col_name, min_value=0, step=10, required=True)
-            }
+                rows = []
+                for key in combo_order:
+                    row = {
+                        "용지": key[0], "접착": key[1], "후지": key[2], "코팅": key[3],
+                        "단위": key[4] if key[4] in unit_opts else def_unit,
+                    }
+                    for (lo, hi), col in zip(gen_ranges, range_cols):
+                        row[col] = price_map.get((key, lo, hi))
+                    rows.append(row)
 
-            edited_matrix = st.data_editor(df_matrix, column_config=col_config, num_rows="dynamic", use_container_width=True, key=f"matrix_editor_{selected_v_name}")
+                col_config = {
+                    "용지": st.column_config.SelectboxColumn("용지", options=sel_papers, required=True),
+                    "접착": st.column_config.SelectboxColumn("접착", options=sel_glues, required=True),
+                    "후지": st.column_config.SelectboxColumn("후지", options=sel_backs, required=True),
+                    "코팅": st.column_config.SelectboxColumn("코팅", options=sel_coats, required=True),
+                    "단위": st.column_config.SelectboxColumn(
+                        "단위", options=unit_opts, required=True,
+                        help="개당·판당은 수량만큼 곱해서 더하고, 건당은 주문 1건에 한 번만 더합니다.",
+                    ),
+                }
+                for col in range_cols:
+                    col_config[col] = st.column_config.NumberColumn(col, min_value=0, step=10)
+
+                edited_matrix = st.data_editor(
+                    pd.DataFrame(rows), column_config=col_config, num_rows="dynamic",
+                    hide_index=True, use_container_width=True,
+                    key=f"matrix_editor_{target_prod}_{selected_v_name}",
+                )
 
             st.markdown("---")
             btn_col1, btn_col2 = st.columns([1, 4])
@@ -1587,18 +1663,30 @@ if st.session_state.page == "settings":
                         st.success("업체가 삭제되었습니다.")
                         st.rerun()
             with btn_col2:
-                if st.button("업체 설정 및 조합 단가 매트릭스 최종 저장"):
-                    if not edit_name.strip(): st.warning("업체 이름을 반드시 입력해야 합니다.")
+                if st.button("업체 설정 및 조합 단가표 최종 저장"):
+                    if not edit_name.strip():
+                        st.warning("업체 이름을 반드시 입력해야 합니다.")
+                    elif edited_matrix is None:
+                        st.warning("수량 구간과 취급 재료를 먼저 채워야 저장할 수 있습니다.")
                     else:
-                        records = edited_matrix.to_dict(orient="records")
+                        # 가로형 표를 (조합 × 수량구간) 한 줄씩의 저장 형식으로 되돌린다.
                         clean_matrix = []
-                        for r in records:
-                            clean_matrix.append({
-                                "용지": str(r.get("용지", "")), "접착": str(r.get("접착", "")),
-                                "후지": str(r.get("후지", "")), "코팅": str(r.get("코팅", "")),
-                                "최소수량": int(r.get("최소수량", 1)), "최대수량": int(r.get("최대수량", 1)),
-                                "적용값": int(r.get(val_col_name, 0))
-                            })
+                        for r in edited_matrix.to_dict(orient="records"):
+                            combo = [str(r.get(k) or "").strip() for k in ("용지", "접착", "후지", "코팅")]
+                            if not all(combo):
+                                continue
+                            unit = str(r.get("단위") or def_unit)
+                            for (lo, hi), col in zip(gen_ranges, range_cols):
+                                raw = r.get(col)
+                                if raw is None or pd.isna(raw):
+                                    continue  # 빈 칸 = 그 구간 미취급
+                                clean_matrix.append({
+                                    "용지": combo[0], "접착": combo[1],
+                                    "후지": combo[2], "코팅": combo[3],
+                                    "단위": unit,
+                                    "최소수량": lo, "최대수량": hi,
+                                    "적용값": int(raw),
+                                })
 
                         updated_v = {
                             "업체명": edit_name.strip(), "과금방식": edit_mode, "단가결정방식": edit_pricing_rule,
@@ -2112,41 +2200,57 @@ def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, 
             sheets_needed = math.ceil(req_qty / per_sheet_fit)
 
             matched_matrix_val = 0
+            matched_unit = default_price_unit(mode, pricing_rule)
             matrix_found = False
             for row in matrix:
                 if (row.get("용지") == sel_p and row.get("접착") == sel_g
                         and row.get("후지") == sel_b and row.get("코팅") == sel_c):
                     if row.get("최소수량", 1) <= sheets_needed <= row.get("최대수량", 999999):
                         matched_matrix_val = row.get("적용값", 0)
+                        matched_unit = row.get("단위") or matched_unit
                         matrix_found = True
                         break
 
+            # 단가를 직접 설정하는 방식인데 해당 조합·수량 구간에 값이 없으면
+            # 견적을 낼 수 없는 것이므로 이 업체는 결과에서 제외한다.
+            if pricing_rule != "기준단가 + 옵션 추가금 합산" and not matrix_found:
+                continue
+
+            matrix_amount = apply_price_unit(matched_matrix_val, matched_unit, req_qty, sheets_needed)
             if pricing_rule == "기준단가 + 옵션 추가금 합산":
-                total_print_fee = (sheets_needed * base_p) + matched_matrix_val + half_fee + full_fee
-                mode_detail = f"1판 {per_sheet_fit}개 배치 (총 {sheets_needed}판 / 기준료+추가금 {matched_matrix_val:,}원)"
+                total_print_fee = (sheets_needed * base_p) + matrix_amount + half_fee + full_fee
+                mode_detail = (f"1판 {per_sheet_fit}개 배치 (총 {sheets_needed}판 / "
+                               f"기준료 + 추가금 {matched_matrix_val:,}원 {matched_unit})")
             else:
-                total_print_fee = (sheets_needed * matched_matrix_val) + half_fee + full_fee
-                mode_detail = f"1판 {per_sheet_fit}개 배치 (총 {sheets_needed}판 / 판당 고유단가 {matched_matrix_val:,}원)"
+                total_print_fee = matrix_amount + half_fee + full_fee
+                mode_detail = (f"1판 {per_sheet_fit}개 배치 (총 {sheets_needed}판 / "
+                               f"단가 {matched_matrix_val:,}원 {matched_unit})")
             unit_price_calc = int(total_print_fee / req_qty)
         else:
             matched_matrix_val = 0
+            matched_unit = default_price_unit(mode, pricing_rule)
             matrix_found = False
             for row in matrix:
                 if (row.get("용지") == sel_p and row.get("접착") == sel_g
                         and row.get("후지") == sel_b and row.get("코팅") == sel_c):
                     if row.get("최소수량", 1) <= req_qty <= row.get("최대수량", 999999):
                         matched_matrix_val = row.get("적용값", 0)
+                        matched_unit = row.get("단위") or matched_unit
                         matrix_found = True
                         break
 
+            # 위와 같은 이유로, 단가가 등록되지 않은 조합·수량은 결과에서 제외한다.
+            if pricing_rule != "기준단가 + 옵션 추가금 합산" and not matrix_found:
+                continue
+
+            matrix_amount = apply_price_unit(matched_matrix_val, matched_unit, req_qty, 0)
             if pricing_rule == "기준단가 + 옵션 추가금 합산":
-                effective_unit_p = base_p + matched_matrix_val
-                mode_detail = f"기준단가({base_p:,}원) + 조합추가금({matched_matrix_val:,}원) 합산"
+                total_print_fee = (req_qty * base_p) + matrix_amount + half_fee + full_fee
+                mode_detail = f"기준단가({base_p:,}원/개) + 추가금 {matched_matrix_val:,}원 {matched_unit}"
             else:
-                effective_unit_p = matched_matrix_val if matrix_found else 0
-                mode_detail = f"조합 구간 고유 단가 {effective_unit_p:,}원 직접 적용"
-            total_print_fee = (req_qty * effective_unit_p) + half_fee + full_fee
-            unit_price_calc = effective_unit_p
+                total_print_fee = matrix_amount + half_fee + full_fee
+                mode_detail = f"조합 단가 {matched_matrix_val:,}원 {matched_unit} 적용"
+            unit_price_calc = int(total_print_fee / req_qty) if req_qty else 0
 
         ship_fee = v.get("배송비", 0)
         if v.get("무료배송액", 0) > 0 and total_print_fee >= v.get("무료배송액", 0):
