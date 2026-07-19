@@ -5,3 +5,7 @@ venv/
 error_log.txt
 .streamlit/secrets.toml
 .claude/
+
+# 실행 중 만들어지는 로컬 데이터 (진짜 저장소는 구글 시트)
+master_options.json
+master_options_backup_*.json
