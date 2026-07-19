@@ -102,6 +102,64 @@ def get_gsheet_worksheet():
         log_error(f"구글 시트 연결 실패: {str(e)}")
         return None
 
+def admin_password():
+    """관리자 암호를 secrets에서 읽는다. 설정하지 않았으면 None."""
+    try:
+        pw = st.secrets.get("ADMIN_PASSWORD")
+    except Exception:
+        return None
+    pw = str(pw).strip() if pw else ""
+    return pw or None
+
+
+def admin_unlocked():
+    """삭제 권한이 있는지 본다.
+    암호를 아예 설정하지 않은 경우에는 예전처럼 누구나 쓸 수 있게 둔다."""
+    if admin_password() is None:
+        return True
+    return bool(st.session_state.get("is_admin"))
+
+
+def render_admin_lock():
+    """관리 콘솔 상단의 잠금 해제 영역."""
+    pw = admin_password()
+    if pw is None:
+        st.warning(
+            "🔓 관리자 암호가 설정되어 있지 않아 **누구나 삭제할 수 있는 상태**입니다. "
+            "삭제를 본인만 하려면 secrets에 `ADMIN_PASSWORD`를 추가해 주세요. (README 참고)"
+        )
+        return
+
+    if st.session_state.get("is_admin"):
+        c1, c2 = st.columns([4, 1])
+        c1.success("🔓 관리자 모드입니다. 삭제 기능을 쓸 수 있습니다.")
+        if c2.button("다시 잠그기", use_container_width=True):
+            st.session_state.is_admin = False
+            st.rerun()
+        return
+
+    st.info("🔒 삭제 기능은 관리자 전용입니다. 등록과 수정은 잠금 없이 하실 수 있습니다.")
+    with st.expander("관리자 잠금 해제"):
+        typed = st.text_input("관리자 암호", type="password", key="admin_pw_input")
+        if st.button("잠금 해제", type="primary", key="admin_unlock_btn"):
+            if typed == pw:
+                st.session_state.is_admin = True
+                st.rerun()
+            else:
+                st.error("암호가 맞지 않습니다.")
+
+
+def delete_button(label, key=None):
+    """삭제 버튼. 잠겨 있으면 눌리지 않는 상태로 보여준다."""
+    if admin_unlocked():
+        return st.button(label, key=key)
+    st.button(
+        f"🔒 {label}", key=key, disabled=True,
+        help="관리자 전용입니다. 관리 콘솔 상단에서 잠금을 해제해 주세요.",
+    )
+    return False
+
+
 def _write_vendors_to_sheet(ws, data):
     rows = [["카테고리", "업체명", "데이터"]]
     for cat, payload in data.items():
@@ -548,6 +606,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-20", "note": "삭제 기능에 관리자 잠금 추가 — 관리자 암호를 설정하면 업체·상품군·공용 재료 삭제는 암호를 아는 사람만 할 수 있습니다 (등록과 수정은 그대로)"},
     {"date": "2026-07-19", "note": "엽서·마스킹 테이프 단가표도 가로형으로 통일 — 수량 구간별 입력, 단위 지정, 할인(음수) 입력 지원"},
     {"date": "2026-07-19", "note": "단가표 옵션 칸에서 여러 항목을 한 줄로 묶기 — 단가가 같은 용지·접착·후지 등을 함께 골라 줄 수를 줄이고, 비워두면 전체에 적용"},
     {"date": "2026-07-19", "note": "조합 단가표를 가로형으로 개편 — 한 조합에 수량 구간별 단가를 나란히 입력, 단가에 개당/판당/건당 단위 지정 가능"},
@@ -715,6 +774,8 @@ if st.session_state.page == "settings":
     else:
         st.caption("⚠️ 구글 시트 미연동 — 업체 데이터가 이 서버의 로컬 파일에만 저장되어 다른 사용자와 공유되지 않습니다. (README 참고)")
 
+    render_admin_lock()
+
     st.markdown("---")
 
     tab2 = st.container()
@@ -777,6 +838,14 @@ if st.session_state.page == "settings":
                 if removed:
                     st.caption(f"➖ 삭제될 항목: {', '.join(removed)}")
 
+                # 항목 추가는 누구나 할 수 있지만, 지우는 것은 관리자만 할 수 있다.
+                removal_locked = bool(removed) and not admin_unlocked()
+                if removal_locked:
+                    st.warning(
+                        "🔒 항목 삭제는 관리자 전용입니다. 지운 항목을 되살리시면 나머지 변경은 저장할 수 있습니다.\n\n"
+                        f"되살려야 할 항목: {', '.join(removed)}"
+                    )
+
                 confirm_delete = True
                 if blocking:
                     lines = "\n".join(
@@ -792,6 +861,8 @@ if st.session_state.page == "settings":
                 if st.button(f"[{target_cat}] 목록 저장", type="primary", key=f"save_master_{target_cat}"):
                     if not new_items:
                         st.warning("항목을 최소 하나는 남겨야 합니다.")
+                    elif removal_locked:
+                        st.error("🔒 항목 삭제는 관리자 전용이라 저장하지 않았습니다.")
                     elif blocking and not confirm_delete:
                         st.warning("사용 중인 항목이 있습니다. 위 동의에 체크하거나 해당 항목을 되살려 주세요.")
                     elif not added and not removed:
@@ -873,7 +944,7 @@ if st.session_state.page == "settings":
             if not current_vendors:
                 with st.expander("이 상품군 삭제"):
                     st.caption(f"등록된 업체가 없는 [{target_prod}] 상품군을 목록에서 지웁니다.")
-                    if st.button(f"[{target_prod}] 상품군 삭제", key="del_category"):
+                    if delete_button(f"[{target_prod}] 상품군 삭제", key="del_category"):
                         del st.session_state.vendors[target_prod]
                         meta = st.session_state.vendors.get(META_KEY)
                         if isinstance(meta, dict):
@@ -1029,7 +1100,7 @@ if st.session_state.page == "settings":
             btn_col1, btn_col2 = st.columns([1, 4])
             with btn_col1:
                 if not is_new:
-                    if st.button("이 마테 업체 삭제"):
+                    if delete_button("이 마테 업체 삭제", key="del_tape_vendor"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
                         st.success("업체가 삭제되었습니다.")
@@ -1272,7 +1343,7 @@ if st.session_state.page == "settings":
             btn_col1, btn_col2 = st.columns([1, 4])
             with btn_col1:
                 if not is_new:
-                    if st.button("이 엽서 업체 삭제"):
+                    if delete_button("이 엽서 업체 삭제", key="del_post_vendor"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
                         st.success("엽서 업체가 삭제되었습니다.")
@@ -1443,7 +1514,7 @@ if st.session_state.page == "settings":
             btn_col1, btn_col2 = st.columns([1, 4])
             with btn_col1:
                 if not is_new:
-                    if st.button("이 업체 삭제"):
+                    if delete_button("이 업체 삭제", key="del_sizematrix_vendor"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
                         st.success("업체가 삭제되었습니다.")
@@ -1750,7 +1821,7 @@ if st.session_state.page == "settings":
             btn_col1, btn_col2 = st.columns([1, 4])
             with btn_col1:
                 if not is_new:
-                    if st.button("이 업체 삭제"):
+                    if delete_button("이 업체 삭제", key="del_sticker_vendor"):
                         del st.session_state.vendors[target_prod][v_index]
                         save_vendors(st.session_state.vendors)
                         st.success("업체가 삭제되었습니다.")
