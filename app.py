@@ -1587,7 +1587,8 @@ if st.session_state.page == "settings":
             st.caption(
                 f"**조합 하나를 한 줄에 적고, 수량 구간별 {with_particle(val_label, '을', '를')} "
                 "옆으로 채우면 됩니다.** 같은 조합에 구간을 여러 개 만들려고 줄을 반복할 필요가 없습니다. "
-                "빈 칸은 그 구간을 취급하지 않는 것으로 처리되고, 0은 금액 0원으로 저장됩니다."
+                "빈 칸은 그 구간을 취급하지 않는 것으로 처리되고, 0은 금액 0원으로 저장됩니다. "
+                "**할인은 음수로 적으면 됩니다** (예: -500)."
             )
 
             saved_rows = v_data.get("조합단가표", [])
@@ -1645,7 +1646,8 @@ if st.session_state.page == "settings":
                     ),
                 }
                 for col in range_cols:
-                    col_config[col] = st.column_config.NumberColumn(col, min_value=0, step=10)
+                    # min_value를 두지 않아 음수(할인) 입력이 가능하다.
+                    col_config[col] = st.column_config.NumberColumn(col, step=10)
 
                 edited_matrix = st.data_editor(
                     pd.DataFrame(rows), column_config=col_config, num_rows="dynamic",
@@ -2225,6 +2227,8 @@ def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, 
                 total_print_fee = matrix_amount + half_fee + full_fee
                 mode_detail = (f"1판 {per_sheet_fit}개 배치 (총 {sheets_needed}판 / "
                                f"단가 {matched_matrix_val:,}원 {matched_unit})")
+            # 할인(음수)이 커도 제작비가 마이너스로 내려가지는 않게 한다.
+            total_print_fee = max(0, total_print_fee)
             unit_price_calc = int(total_print_fee / req_qty)
         else:
             matched_matrix_val = 0
@@ -2250,6 +2254,8 @@ def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, 
             else:
                 total_print_fee = matrix_amount + half_fee + full_fee
                 mode_detail = f"조합 단가 {matched_matrix_val:,}원 {matched_unit} 적용"
+            # 할인(음수)이 커도 제작비가 마이너스로 내려가지는 않게 한다.
+            total_print_fee = max(0, total_print_fee)
             unit_price_calc = int(total_print_fee / req_qty) if req_qty else 0
 
         ship_fee = v.get("배송비", 0)
