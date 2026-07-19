@@ -232,10 +232,10 @@ def qty_range_label(lo, hi):
 
 # 기본 마스터 옵션 풀 (스티커, 엽서, 마스킹 테이프 공용 목록)
 DEFAULT_MASTER_OPTIONS = {
-    "용지": ["일반아트지", "고급유포지", "투명데드롱", "모조지 220g", "크라프트지", "랑데부 240g", "특수홀로그램"],
-    "접착": ["일반영구접착", "리무버블(재박리)", "강접착", "해당없음"],
-    "후지": ["백색후지", "황색후지", "투명후지", "해당없음"],
-    "코팅": ["무코팅", "유광코팅", "무광코팅", "스파클코팅", "단면유광"],
+    "스티커 용지": ["일반아트지", "고급유포지", "투명데드롱", "모조지 220g", "크라프트지", "랑데부 240g", "특수홀로그램"],
+    "스티커 접착": ["일반영구접착", "리무버블(재박리)", "강접착", "해당없음"],
+    "스티커 후지": ["백색후지", "황색후지", "투명후지", "해당없음"],
+    "스티커 코팅": ["무코팅", "유광코팅", "무광코팅", "스파클코팅", "단면유광"],
     "엽서용지": ["모조지 220g", "랑데부 240g", "몽블랑 240g", "아르떼 310g", "틴토레토 250g", "반포드 250g"],
     "인쇄방식": ["토너 인쇄", "인디고 인쇄", "디지털 인쇄", "옵셋 인쇄"],
     "인쇄도수": ["단면 4도", "양면 8도", "단면 1도 (흑백)", "양면 2도 (흑백)"],
@@ -246,6 +246,78 @@ DEFAULT_MASTER_OPTIONS = {
     "마테도수": ["단면 4도", "단면 1도 (별색)", "무동판 인쇄"],
     "마테포장": ["수축 튜브 포장", "라벨스티커 스포 포장", "개별 종이갑 포장"]
 }
+
+# 예전 이름 -> 새 이름. 이미 저장된 master_options.json을 불러올 때 자동으로 맞춰준다.
+MASTER_KEY_RENAMES = {
+    "용지": "스티커 용지", "접착": "스티커 접착",
+    "후지": "스티커 후지", "코팅": "스티커 코팅",
+}
+
+# 마스터 목록 관리 화면에서 상품군별로 묶어 보여줄 순서
+MASTER_GROUPS = {
+    "스티커": ["스티커 용지", "스티커 접착", "스티커 후지", "스티커 코팅"],
+    "엽서": ["엽서용지", "인쇄방식", "인쇄도수", "고정사이즈"],
+    "마스킹 테이프": ["마테타입", "마테가로", "마테세로", "마테도수", "마테포장"],
+}
+
+
+def migrate_master_opts(opts):
+    """예전 키(용지/접착/후지/코팅)를 새 키(스티커 용지 …)로 옮긴다."""
+    if not isinstance(opts, dict):
+        return dict(DEFAULT_MASTER_OPTIONS)
+    for old, new in MASTER_KEY_RENAMES.items():
+        if old in opts:
+            if new not in opts:
+                opts[new] = opts.pop(old)
+            else:
+                # 새 키가 이미 있으면 옛 항목 중 빠진 것만 합친다.
+                for item in opts.pop(old):
+                    if item not in opts[new]:
+                        opts[new].append(item)
+    # 기본 카테고리가 통째로 없으면 채워 넣는다.
+    for k, v in DEFAULT_MASTER_OPTIONS.items():
+        opts.setdefault(k, list(v))
+    return opts
+
+
+def master_list(cat):
+    """마스터 목록을 돌려준다. 카테고리가 없으면 빈 목록."""
+    return st.session_state.master_opts.get(cat, [])
+
+
+def master_first(cat):
+    """신규 업체 기본값용 — 목록이 비어 있어도 오류 없이 빈 목록을 돌려준다."""
+    items = master_list(cat)
+    return [items[0]] if items else []
+
+
+def safe_multiselect(label, cat, saved, **kwargs):
+    """마스터 목록에서 삭제된 값이 업체 데이터에 남아 있어도 오류 없이 표시한다.
+
+    st.multiselect는 default에 options에 없는 값이 있으면 예외를 던지므로,
+    저장된 값 중 현재 목록에 있는 것만 걸러서 기본값으로 쓴다.
+    """
+    options = master_list(cat)
+    if saved is None:
+        default = master_first(cat)
+    else:
+        default = [s for s in saved if s in options]
+        dropped = [s for s in saved if s not in options]
+        if dropped:
+            st.caption(f"⚠️ 마스터 목록에서 삭제된 항목이라 선택 해제됨: {', '.join(dropped)}")
+    return st.multiselect(label, options, default=default, **kwargs)
+
+
+def find_master_usage(value):
+    """이 값을 쓰고 있는 업체를 찾는다. (마스터 항목 삭제 전 경고용)"""
+    hits = []
+    for cat in product_categories():
+        for v in st.session_state.vendors.get(cat, []):
+            for field_val in v.values():
+                if isinstance(field_val, list) and value in field_val:
+                    hits.append(f"{cat} · {v.get('업체명', '이름없음')}")
+                    break
+    return hits
 
 # 기본 업체 데이터 (스티커, 엽서, 마스킹테이프 기본 탑재)
 DEFAULT_VENDORS = {
@@ -346,6 +418,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-19", "note": "공용 재료·공정 목록에 삭제 기능 추가, 용지/접착/후지/코팅을 '스티커 용지' 등으로 이름 정리"},
     {"date": "2026-07-18", "note": "상품군마다 입력 양식 선택 가능 — 아크릴키링·코롯토처럼 종류/사이즈별 단가표가 다른 굿즈는 각각 상품군으로 추가"},
     {"date": "2026-07-18", "note": "전 업체에 제작기간·빠른배송 항목 추가"},
     {"date": "2026-07-18", "note": "환경 설정 화면 분리, 마법사 단계에 톱니바퀴 아이콘 추가, 사용 방법·업데이트 노트 화면 신설"},
@@ -359,7 +432,7 @@ if "vendors" not in st.session_state:
 if "config" not in st.session_state:
     st.session_state.config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
 if "master_opts" not in st.session_state:
-    st.session_state.master_opts = load_json(MASTER_OPT_FILE, DEFAULT_MASTER_OPTIONS)
+    st.session_state.master_opts = migrate_master_opts(load_json(MASTER_OPT_FILE, dict(DEFAULT_MASTER_OPTIONS)))
 if "page" not in st.session_state:
     st.session_state.page = "landing"       # landing | match | settings
 if "match_step" not in st.session_state:
@@ -512,26 +585,89 @@ if st.session_state.page == "settings":
                 st.success("구글 시트의 최신 업체 데이터를 반영했습니다.")
                 st.rerun()
 
-        with st.expander("전체 공용 마스터 재료/공정 풀 추가 (카테고리별 목록 확장)", expanded=False):
-            m_col1, m_col2 = st.columns([1, 2])
-            with m_col1:
-                target_cat = st.selectbox("추가할 옵션 카테고리 선택", ["마테타입", "마테가로", "마테세로", "마테도수", "마테포장", "엽서용지", "인쇄방식", "인쇄도수", "고정사이즈", "용지", "접착", "후지", "코팅"])
-            with m_col2:
-                new_val = st.text_input(f"신규 [{target_cat}] 항목 입력")
-                if st.button(f"[{target_cat}] 마스터 목록에 추가"):
-                    if new_val and new_val not in st.session_state.master_opts.get(target_cat, []):
-                        if target_cat not in st.session_state.master_opts:
-                            st.session_state.master_opts[target_cat] = []
-                        st.session_state.master_opts[target_cat].append(new_val)
-                        save_json(MASTER_OPT_FILE, st.session_state.master_opts)
-                        st.success(f"[{new_val}] 항목이 등록되었습니다.")
-                        st.rerun()
+        with st.expander("🧾 공용 재료·공정 목록 관리 (업체 등록 화면에서 고를 수 있는 항목)", expanded=False):
+            st.caption(
+                "여기에 등록된 항목만 업체 등록 화면의 선택지로 나타납니다. "
+                "상품군을 고른 뒤 항목을 선택하면 목록을 추가·삭제할 수 있습니다."
+            )
+
+            mg1, mg2 = st.columns([1, 2])
+            with mg1:
+                master_group = st.radio("상품군", list(MASTER_GROUPS.keys()), key="master_group")
+            with mg2:
+                target_cat = st.radio("항목", MASTER_GROUPS[master_group], horizontal=True, key="master_cat")
+
+            current_items = list(master_list(target_cat))
+
+            with st.container(border=True):
+                st.markdown(f"**{target_cat}** · 현재 {len(current_items)}개")
+                st.caption("빈 줄에 입력하면 추가되고, 행을 선택해 지우면 삭제됩니다. 다 고친 뒤 아래 저장을 누르세요.")
+
+                edited_items = st.data_editor(
+                    pd.DataFrame({"항목": current_items}),
+                    column_config={"항목": st.column_config.TextColumn(target_cat, required=False)},
+                    num_rows="dynamic", hide_index=True, use_container_width=True,
+                    key=f"master_editor_{target_cat}",
+                )
+
+                # 입력된 값 정리 (공백 제거 + 중복 제거, 순서 유지)
+                new_items, seen = [], set()
+                for rec in edited_items.to_dict(orient="records"):
+                    val = str(rec.get("항목") or "").strip()
+                    if val and val not in seen:
+                        seen.add(val)
+                        new_items.append(val)
+
+                removed = [i for i in current_items if i not in new_items]
+                added = [i for i in new_items if i not in current_items]
+
+                # 삭제하려는 항목을 쓰고 있는 업체가 있으면 미리 알려준다.
+                blocking = {}
+                for item in removed:
+                    users = find_master_usage(item)
+                    if users:
+                        blocking[item] = users
+
+                if added:
+                    st.caption(f"➕ 추가될 항목: {', '.join(added)}")
+                if removed:
+                    st.caption(f"➖ 삭제될 항목: {', '.join(removed)}")
+
+                confirm_delete = True
+                if blocking:
+                    lines = "\n".join(
+                        f"- **{item}** → {', '.join(users[:5])}" + (" 외" if len(users) > 5 else "")
+                        for item, users in blocking.items()
+                    )
+                    st.warning(
+                        "아래 항목은 이미 등록된 업체가 사용 중입니다. 삭제해도 업체 데이터는 남지만 "
+                        f"해당 선택은 해제됩니다.\n\n{lines}"
+                    )
+                    confirm_delete = st.checkbox("사용 중인 항목을 삭제하는 데 동의합니다.", key=f"confirm_del_{target_cat}")
+
+                if st.button(f"[{target_cat}] 목록 저장", type="primary", key=f"save_master_{target_cat}"):
+                    if not new_items:
+                        st.warning("항목을 최소 하나는 남겨야 합니다.")
+                    elif blocking and not confirm_delete:
+                        st.warning("사용 중인 항목이 있습니다. 위 동의에 체크하거나 해당 항목을 되살려 주세요.")
+                    elif not added and not removed:
+                        st.info("변경된 내용이 없습니다.")
                     else:
-                        st.warning("이미 있는 항목이거나 입력값이 비어 있습니다.")
-                        
-            st.write("현재 등록된 마스터 풀 현황:")
-            for k, v_list in st.session_state.master_opts.items():
-                st.write(f"- **{k}**: {', '.join(v_list)}")
+                        st.session_state.master_opts[target_cat] = new_items
+                        if save_json(MASTER_OPT_FILE, st.session_state.master_opts):
+                            st.success(f"[{target_cat}] 목록을 저장했습니다. (추가 {len(added)}개 · 삭제 {len(removed)}개)")
+                            st.rerun()
+
+            with st.expander("전체 목록 한눈에 보기"):
+                for group_name, cats in MASTER_GROUPS.items():
+                    st.markdown(f"**{group_name}**")
+                    st.dataframe(
+                        pd.DataFrame([
+                            {"항목": c, "개수": len(master_list(c)), "내용": ", ".join(master_list(c)) or "-"}
+                            for c in cats
+                        ]),
+                        use_container_width=True, hide_index=True,
+                    )
 
         st.markdown("---")
         
@@ -611,11 +747,11 @@ if st.session_state.page == "settings":
             if is_new:
                 v_data = {
                     "업체명": "", "상품명": "",
-                    "제공타입": [st.session_state.master_opts["마테타입"][0]],
-                    "제공가로": [st.session_state.master_opts["마테가로"][0]],
-                    "제공세로": [st.session_state.master_opts["마테세로"][0]],
-                    "제공도수": [st.session_state.master_opts["마테도수"][0]],
-                    "제공포장": [st.session_state.master_opts["마테포장"][0]],
+                    "제공타입": master_first("마테타입"),
+                    "제공가로": master_first("마테가로"),
+                    "제공세로": master_first("마테세로"),
+                    "제공도수": master_first("마테도수"),
+                    "제공포장": master_first("마테포장"),
                     "세로편집추가": 1.5,
                     "라벨포장여부": "지원 불가",
                     "타입별라벨차등": "아니오",
@@ -652,13 +788,13 @@ if st.session_state.page == "settings":
             st.markdown("### 2. 마테 타입, 규격, 인쇄도수 및 포장법 다중 지정")
             mt_sec1, mt_sec2, mt_sec3 = st.columns(3)
             with mt_sec1:
-                sel_types = st.multiselect("제공 마스킹 테이프 타입 선택/추가 (복수)", st.session_state.master_opts["마테타입"], default=v_data.get("제공타입", [st.session_state.master_opts["마테타입"][0]]))
-                sel_colors = st.multiselect("제공 인쇄 도수 선택/추가 (복수)", st.session_state.master_opts["마테도수"], default=v_data.get("제공도수", [st.session_state.master_opts["마테도수"][0]]))
+                sel_types = safe_multiselect("제공 마스킹 테이프 타입 (복수 선택)", "마테타입", v_data.get("제공타입"))
+                sel_colors = safe_multiselect("제공 인쇄 도수 (복수 선택)", "마테도수", v_data.get("제공도수"))
             with mt_sec2:
-                sel_widths = st.multiselect("제공 가로 규격 선택/추가 (m 단위, 복수)", st.session_state.master_opts["마테가로"], default=v_data.get("제공가로", [st.session_state.master_opts["마테가로"][0]]))
-                sel_heights = st.multiselect("제공 세로 규격 선택/추가 (mm 단위, 복수)", st.session_state.master_opts["마테세로"], default=v_data.get("제공세로", [st.session_state.master_opts["마테세로"][0]]))
+                sel_widths = safe_multiselect("제공 가로 규격 (m, 복수 선택)", "마테가로", v_data.get("제공가로"))
+                sel_heights = safe_multiselect("제공 세로 규격 (mm, 복수 선택)", "마테세로", v_data.get("제공세로"))
             with mt_sec3:
-                sel_packs = st.multiselect("제공 포장 방법 선택/추가 (복수)", st.session_state.master_opts["마테포장"], default=v_data.get("제공포장", [st.session_state.master_opts["마테포장"][0]]))
+                sel_packs = safe_multiselect("제공 포장 방법 (복수 선택)", "마테포장", v_data.get("제공포장"))
 
             st.markdown("### 3. 포장 및 원통 라벨 스티커 정밀 설정")
             lbl_avail = st.radio("라벨 포장 지원 여부", ["지원 불가", "지원 가능"], index=0 if v_data.get("라벨포장여부", "지원 불가") == "지원 불가" else 1)
@@ -825,11 +961,11 @@ if st.session_state.page == "settings":
                 v_data = {
                     "업체명": "", "상품명": "표준 아트 엽서", "과금기준": "장수 제작 (수량 기준)",
                     "단가결정방식": "옵션 조합별 단가 직접 설정", "기준단가": 0,
-                    "제공인쇄방식": [st.session_state.master_opts["인쇄방식"][0]],
-                    "제공인쇄도수": [st.session_state.master_opts["인쇄도수"][0]],
-                    "제공용지": [st.session_state.master_opts["엽서용지"][0]],
+                    "제공인쇄방식": master_first("인쇄방식"),
+                    "제공인쇄도수": master_first("인쇄도수"),
+                    "제공용지": master_first("엽서용지"),
                     "사이즈모드": "고정 + 자유 겸용",
-                    "제공고정사이즈": [st.session_state.master_opts["고정사이즈"][0]],
+                    "제공고정사이즈": master_first("고정사이즈"),
                     "최소가로": 80, "최소세로": 80, "최대가로": 210, "최대세로": 297,
                     "후가공목록": {"귀돌이(라운딩)": {"기본": 3000, "수량당": 10}, "금박(유광)": {"기본": 15000, "수량당": 50}},
                     "재단비유형": "인쇄 가격에 포함", "재단비별도": 0,
@@ -870,11 +1006,11 @@ if st.session_state.page == "settings":
             st.markdown("### 2. 인쇄 방식, 도수 및 엽서 용지 다중 선택")
             ic1, ic2, ic3 = st.columns(3)
             with ic1:
-                sel_methods = st.multiselect("제공 인쇄 방식 (복수 선택 가능)", st.session_state.master_opts["인쇄방식"], default=v_data.get("제공인쇄방식", [st.session_state.master_opts["인쇄방식"][0]]))
+                sel_methods = safe_multiselect("제공 인쇄 방식 (복수 선택)", "인쇄방식", v_data.get("제공인쇄방식"))
             with ic2:
-                sel_colors = st.multiselect("제공 인쇄 도수 (복수 선택 가능)", st.session_state.master_opts["인쇄도수"], default=v_data.get("제공인쇄도수", [st.session_state.master_opts["인쇄도수"][0]]))
+                sel_colors = safe_multiselect("제공 인쇄 도수 (복수 선택)", "인쇄도수", v_data.get("제공인쇄도수"))
             with ic3:
-                sel_papers = st.multiselect("제공 엽서 용지 및 g수 (복수 선택 가능)", st.session_state.master_opts["엽서용지"], default=v_data.get("제공용지", [st.session_state.master_opts["엽서용지"][0]]))
+                sel_papers = safe_multiselect("제공 엽서 용지 (복수 선택)", "엽서용지", v_data.get("제공용지"))
 
             st.markdown("### 3. 사이즈 규격 모드 및 재단 여백 공차 설정")
             sc1, sc2, sc3, sc4 = st.columns(4)
@@ -890,7 +1026,7 @@ if st.session_state.page == "settings":
                 edit_cut_fee = st.number_input("별도 재단비 (원)", min_value=0, value=v_data.get("재단비별도", 0))
 
             if edit_size_mode in ["고정 사이즈 전용", "고정 + 자유 겸용"]:
-                sel_fixed_sizes = st.multiselect("제공 고정 사이즈 목록 선택", st.session_state.master_opts["고정사이즈"], default=v_data.get("제공고정사이즈", [st.session_state.master_opts["고정사이즈"][0]]))
+                sel_fixed_sizes = safe_multiselect("제공 고정 사이즈 (복수 선택)", "고정사이즈", v_data.get("제공고정사이즈"))
             else:
                 sel_fixed_sizes = []
 
@@ -1231,8 +1367,8 @@ if st.session_state.page == "settings":
                     "이미지반칼거리": 1.5, "완칼반칼거리": 2.0, "반칼최소가로": 5.0, "반칼최소세로": 5.0,
                     "반칼색상": "#FF00FF", "완칼색상": "#00FFFF", "재단선마크": "+자 형", "칼선굵기": 0.25,
                     "배송비": 3000, "무료배송액": 50000,
-                    "제공용지": [st.session_state.master_opts["용지"][0]], "제공접착": [st.session_state.master_opts["접착"][0]],
-                    "제공후지": [st.session_state.master_opts["후지"][0]], "제공코팅": [st.session_state.master_opts["코팅"][0]],
+                    "제공용지": master_first("스티커 용지"), "제공접착": master_first("스티커 접착"),
+                    "제공후지": master_first("스티커 후지"), "제공코팅": master_first("스티커 코팅"),
                     "조합단가표": []
                 }
                 v_index = len(current_vendors)
@@ -1321,15 +1457,11 @@ if st.session_state.page == "settings":
             with st.container(border=True):
                 m1, m2 = st.columns(2)
                 with m1:
-                    sel_papers = st.multiselect("용지", st.session_state.master_opts["용지"],
-                                                default=v_data.get("제공용지", [st.session_state.master_opts["용지"][0]]))
-                    sel_backs = st.multiselect("후지", st.session_state.master_opts["후지"],
-                                               default=v_data.get("제공후지", [st.session_state.master_opts["후지"][0]]))
+                    sel_papers = safe_multiselect("용지", "스티커 용지", v_data.get("제공용지"))
+                    sel_backs = safe_multiselect("후지", "스티커 후지", v_data.get("제공후지"))
                 with m2:
-                    sel_glues = st.multiselect("접착", st.session_state.master_opts["접착"],
-                                               default=v_data.get("제공접착", [st.session_state.master_opts["접착"][0]]))
-                    sel_coats = st.multiselect("코팅", st.session_state.master_opts["코팅"],
-                                               default=v_data.get("제공코팅", [st.session_state.master_opts["코팅"][0]]))
+                    sel_glues = safe_multiselect("접착", "스티커 접착", v_data.get("제공접착"))
+                    sel_coats = safe_multiselect("코팅", "스티커 코팅", v_data.get("제공코팅"))
 
             st.markdown("### 6. 구간별 조합 단가표")
             val_col_name = "옵션추가금(원)" if edit_pricing_rule == "기준단가 + 옵션 추가금 합산" else "조합적용단가(원)"
