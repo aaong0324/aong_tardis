@@ -418,6 +418,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-19", "note": "스티커 업체에 칼선·재단 규격 입력 추가 (최소 재단 크기, 칼선 간격, 색상, 굵기) — 검색 결과에 도안 가이드로 표시"},
     {"date": "2026-07-19", "note": "공용 재료·공정 목록에 삭제 기능 추가, 용지/접착/후지/코팅을 '스티커 용지' 등으로 이름 정리"},
     {"date": "2026-07-18", "note": "상품군마다 입력 양식 선택 가능 — 아크릴키링·코롯토처럼 종류/사이즈별 단가표가 다른 굿즈는 각각 상품군으로 추가"},
     {"date": "2026-07-18", "note": "전 업체에 제작기간·빠른배송 항목 추가"},
@@ -491,6 +492,16 @@ st.html(f"""
     .vendor .badges {{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }}
     .vendor .badge {{ font-size:11.5px; font-weight:600; padding:3px 8px; border-radius:3px; background:var(--tint); color:#444; border:1px solid var(--hair); }}
     .vendor .note {{ font-size:13px; color:var(--mute); line-height:1.55; }}
+    .vendor .guide {{ margin-top:8px; }}
+    .vendor .guide summary {{
+        font-size:12.5px; font-weight:600; color:var(--ink); cursor:pointer;
+        list-style:none; display:inline-block; padding:3px 9px;
+        border:1px solid var(--hair); border-radius:var(--radius); background:var(--tint);
+    }}
+    .vendor .guide summary::-webkit-details-marker {{ display:none; }}
+    .vendor .guide summary:hover {{ border-color:var(--mute); }}
+    .vendor .guide ul {{ margin:8px 0 0; padding-left:18px; }}
+    .vendor .guide li {{ font-size:12.5px; color:var(--mute); line-height:1.7; }}
 
     /* ── 진입 화면 ── */
     .landing-brand {{ font-size:26px; font-weight:800; letter-spacing:-0.03em; margin-bottom:8px; }}
@@ -1452,7 +1463,79 @@ if st.session_state.page == "settings":
                     edit_full_price = st.number_input("추가금 (원)", min_value=0,
                                                       value=v_data.get("완칼추가금", 0), key="full_price")
 
-            st.markdown("### 5. 취급 재료")
+            st.markdown("### 5. 칼선 · 재단 규격")
+            st.caption(
+                "업체가 요구하는 도안 제작 규격입니다. **최소 재단 크기와 완칼 간격은 검색 결과 계산에 직접 쓰이고**, "
+                "나머지는 손님에게 도안 가이드로 안내됩니다."
+            )
+            with st.container(border=True):
+                CUT_BASIS = ["가로/세로 각각 기준", "가로+세로 합계 기준"]
+                st.markdown("**최소 재단 크기** · 이보다 작은 주문은 이 업체가 검색 결과에서 제외됩니다.")
+                edit_cut_basis = st.radio(
+                    "판정 기준", CUT_BASIS,
+                    index=CUT_BASIS.index(v_data.get("최소재단기준", "가로/세로 각각 기준"))
+                    if v_data.get("최소재단기준", "가로/세로 각각 기준") in CUT_BASIS else 0,
+                    horizontal=True, key="cut_basis",
+                )
+                if edit_cut_basis == "가로/세로 각각 기준":
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        edit_min_cut_w = st.number_input("최소 가로 (mm)", min_value=0.0,
+                                                         value=float(v_data.get("최소재단가로", 10)), step=1.0)
+                    with mc2:
+                        edit_min_cut_h = st.number_input("최소 세로 (mm)", min_value=0.0,
+                                                         value=float(v_data.get("최소재단세로", 10)), step=1.0)
+                    edit_min_cut_sum = float(v_data.get("최소재단합계", 20))
+                else:
+                    edit_min_cut_sum = st.number_input("최소 가로+세로 합계 (mm)", min_value=0.0,
+                                                       value=float(v_data.get("최소재단합계", 20)), step=1.0)
+                    edit_min_cut_w = float(v_data.get("최소재단가로", 10))
+                    edit_min_cut_h = float(v_data.get("최소재단세로", 10))
+
+                st.divider()
+                st.markdown("**칼선 간 여백** · 완칼 간격(동일 색상)은 1판에 몇 개가 들어가는지 계산에 쓰입니다.")
+                g1, g2 = st.columns(2)
+                with g1:
+                    edit_gap_full_same = st.number_input("완칼 간격 · 동일 색상 (mm)", min_value=0.0,
+                                                         value=float(v_data.get("완칼간거리_동일색", 3.0)), step=0.5)
+                    edit_gap_full_diff = st.number_input("완칼 간격 · 다른 색상 (mm)", min_value=0.0,
+                                                         value=float(v_data.get("완칼간거리_다른색", 5.0)), step=0.5)
+                with g2:
+                    edit_gap_half = st.number_input("반칼 간격 (mm)", min_value=0.0,
+                                                    value=float(v_data.get("반칼간거리", 2.0)), step=0.5)
+                    edit_gap_full_half = st.number_input("완칼 ↔ 반칼 간격 (mm)", min_value=0.0,
+                                                         value=float(v_data.get("완칼반칼거리", 2.0)), step=0.5)
+                edit_gap_img_half = st.number_input("이미지 ↔ 반칼 여백 (mm)", min_value=0.0,
+                                                    value=float(v_data.get("이미지반칼거리", 1.5)), step=0.5,
+                                                    help="그림 가장자리와 반칼선 사이에 두어야 하는 최소 여백입니다.")
+
+                st.divider()
+                st.markdown("**반칼 최소 크기**")
+                h1, h2 = st.columns(2)
+                with h1:
+                    edit_half_min_w = st.number_input("반칼 최소 가로 (mm)", min_value=0.0,
+                                                      value=float(v_data.get("반칼최소가로", 5.0)), step=0.5)
+                with h2:
+                    edit_half_min_h = st.number_input("반칼 최소 세로 (mm)", min_value=0.0,
+                                                      value=float(v_data.get("반칼최소세로", 5.0)), step=0.5)
+
+                st.divider()
+                st.markdown("**칼선 표기 규격** · 도안 파일에 칼선을 그릴 때 쓰는 색과 굵기입니다.")
+                c1, c2, c3 = st.columns([2, 2, 3])
+                with c1:
+                    edit_half_color = st.color_picker("반칼선 색상", value=v_data.get("반칼색상", "#FF00FF"))
+                with c2:
+                    edit_full_color = st.color_picker("완칼선 색상", value=v_data.get("완칼색상", "#00FFFF"))
+                with c3:
+                    edit_line_width = st.number_input("칼선 굵기 (mm)", min_value=0.0,
+                                                      value=float(v_data.get("칼선굵기", 0.25)), step=0.05,
+                                                      format="%.2f")
+                MARK_TYPES = ["+자 형", "ㄱ자 형", "점선 표시", "없음"]
+                saved_mark = v_data.get("재단선마크", "+자 형")
+                edit_mark = st.selectbox("재단선 마크", MARK_TYPES,
+                                         index=MARK_TYPES.index(saved_mark) if saved_mark in MARK_TYPES else 0)
+
+            st.markdown("### 6. 취급 재료")
             st.caption("이 업체가 제공하는 재료만 선택하세요. 여기서 고른 것만 아래 단가표에 쓸 수 있습니다.")
             with st.container(border=True):
                 m1, m2 = st.columns(2)
@@ -1463,7 +1546,7 @@ if st.session_state.page == "settings":
                     sel_glues = safe_multiselect("접착", "스티커 접착", v_data.get("제공접착"))
                     sel_coats = safe_multiselect("코팅", "스티커 코팅", v_data.get("제공코팅"))
 
-            st.markdown("### 6. 구간별 조합 단가표")
+            st.markdown("### 7. 구간별 조합 단가표")
             val_col_name = "옵션추가금(원)" if edit_pricing_rule == "기준단가 + 옵션 추가금 합산" else "조합적용단가(원)"
 
             matrix_data = v_data.get("조합단가표", [])
@@ -1522,14 +1605,14 @@ if st.session_state.page == "settings":
                             "기준단가": edit_base_p, "판가로": edit_sw, "판세로": edit_sh, "화이트인쇄": edit_white,
                             "색상프로필": edit_profile, "반칼과금유형": edit_half_rule, "반칼추가금": edit_half_price,
                             "완칼과금유형": edit_full_rule, "완칼추가금": edit_full_price,
-                            "최소재단기준": v_data.get("최소재단기준", "가로/세로 각각 기준"),
-                            "최소재단가로": v_data.get("최소재단가로", 10), "최소재단세로": v_data.get("최소재단세로", 10),
-                            "최소재단합계": v_data.get("최소재단합계", 20), "반칼간거리": v_data.get("반칼간거리", 2.0),
-                            "완칼간거리_동일색": v_data.get("완칼간거리_동일색", 3.0), "완칼간거리_다른색": v_data.get("완칼간거리_다른색", 5.0),
-                            "이미지반칼거리": v_data.get("이미지반칼거리", 1.5), "완칼반칼거리": v_data.get("완칼반칼거리", 2.0),
-                            "반칼최소가로": v_data.get("반칼최소가로", 5.0), "반칼최소세로": v_data.get("반칼최소세로", 5.0),
-                            "반칼색상": v_data.get("반칼색상", "#FF00FF"), "완칼색상": v_data.get("완칼색상", "#00FFFF"),
-                            "재단선마크": v_data.get("재단선마크", "+자 형"), "칼선굵기": v_data.get("칼선굵기", 0.25),
+                            "최소재단기준": edit_cut_basis,
+                            "최소재단가로": edit_min_cut_w, "최소재단세로": edit_min_cut_h,
+                            "최소재단합계": edit_min_cut_sum, "반칼간거리": edit_gap_half,
+                            "완칼간거리_동일색": edit_gap_full_same, "완칼간거리_다른색": edit_gap_full_diff,
+                            "이미지반칼거리": edit_gap_img_half, "완칼반칼거리": edit_gap_full_half,
+                            "반칼최소가로": edit_half_min_w, "반칼최소세로": edit_half_min_h,
+                            "반칼색상": edit_half_color, "완칼색상": edit_full_color,
+                            "재단선마크": edit_mark, "칼선굵기": edit_line_width,
                             "배송비": edit_ship, "무료배송액": edit_free_ship,
                             "제작기간": edit_lead_time.strip(), "빠른배송가능": edit_fast_ship,
                             "제공용지": sel_papers,
@@ -1544,7 +1627,7 @@ if st.session_state.page == "settings":
                             st.rerun()
 
             st.markdown("---")
-            st.markdown(f"### 7. 등록된 [{target_prod}] 업체 요약")
+            st.markdown(f"### 8. 등록된 [{target_prod}] 업체 요약")
             summary_rows = []
             for v in current_vendors:
                 summary_rows.append({
@@ -1920,6 +2003,61 @@ def _lead_badges(v):
     return badges
 
 
+def _fmt_mm(value):
+    """3.0 -> '3', 0.25 -> '0.25' 처럼 불필요한 소수점을 없앤다."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f"{num:g}"
+
+
+def _cut_guide(v):
+    """업체가 요구하는 도안 제작 규격을 손님용 안내 문구로 만든다."""
+    items = []
+
+    basis = v.get("최소재단기준", "가로/세로 각각 기준")
+    if basis == "가로+세로 합계 기준":
+        s = _fmt_mm(v.get("최소재단합계"))
+        if s:
+            items.append(f"최소 재단 가로+세로 합계 {s}mm 이상")
+    else:
+        w, h = _fmt_mm(v.get("최소재단가로")), _fmt_mm(v.get("최소재단세로"))
+        if w and h:
+            items.append(f"최소 재단 {w}×{h}mm 이상")
+
+    gaps = [
+        ("완칼 간격(동일 색상)", v.get("완칼간거리_동일색")),
+        ("완칼 간격(다른 색상)", v.get("완칼간거리_다른색")),
+        ("반칼 간격", v.get("반칼간거리")),
+        ("완칼↔반칼", v.get("완칼반칼거리")),
+        ("이미지↔반칼 여백", v.get("이미지반칼거리")),
+    ]
+    gap_txt = [f"{name} {_fmt_mm(val)}mm" for name, val in gaps if _fmt_mm(val) is not None]
+    if gap_txt:
+        items.append(" · ".join(gap_txt))
+
+    hw, hh = _fmt_mm(v.get("반칼최소가로")), _fmt_mm(v.get("반칼최소세로"))
+    if hw and hh:
+        items.append(f"반칼 최소 크기 {hw}×{hh}mm")
+
+    line = []
+    lw = _fmt_mm(v.get("칼선굵기"))
+    if lw:
+        line.append(f"칼선 굵기 {lw}mm")
+    if v.get("반칼색상"):
+        line.append(f"반칼선 {v['반칼색상']}")
+    if v.get("완칼색상"):
+        line.append(f"완칼선 {v['완칼색상']}")
+    mark = str(v.get("재단선마크", "") or "").strip()
+    if mark and mark != "없음":
+        line.append(f"재단선 마크 {mark}")
+    if line:
+        items.append(" · ".join(line))
+
+    return items
+
+
 def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, sel_c,
                           req_white, req_rgb, req_half, req_full):
     vendors = st.session_state.vendors.get(product, [])
@@ -2027,6 +2165,7 @@ def calc_generic_results(product, size_w, size_h, req_qty, sel_p, sel_g, sel_b, 
             "최종총가격": final_total,
             "badges": badges,
             "note": f"[{pricing_rule}] {mode_detail}",
+            "guide": _cut_guide(v),
         })
     return sorted(results, key=lambda x: x["최종총가격"])
 
@@ -2220,6 +2359,15 @@ def render_vendor_card(rank, r):
     rc = "" if rank == 1 else ("r2" if rank == 2 else "r3")
     badges_html = "".join(f'<span class="badge">{esc(b)}</span>' for b in r["badges"])
     note_html = f'<div class="note">{esc(r["note"])}</div>' if r.get("note") else ""
+
+    guide_html = ""
+    if r.get("guide"):
+        rows = "".join(f"<li>{esc(g)}</li>" for g in r["guide"])
+        guide_html = (
+            '<details class="guide"><summary>도안 제작 규격 보기</summary>'
+            f'<ul>{rows}</ul></details>'
+        )
+
     st.html(f'''<div class="vendor">
       <div class="rank {rc}">{rank}</div>
       <div class="body">
@@ -2229,6 +2377,7 @@ def render_vendor_card(rank, r):
         </div>
         <div class="badges">{badges_html}</div>
         {note_html}
+        {guide_html}
       </div>
     </div>''')
 
