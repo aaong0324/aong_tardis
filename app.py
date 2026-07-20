@@ -576,6 +576,8 @@ DEFAULT_MASTER_OPTIONS = {
     "스티커 후지": ["백색후지", "황색후지", "투명후지", "해당없음"],
     "스티커 코팅": ["무코팅", "유광코팅", "무광코팅", "스파클코팅", "단면유광"],
     "엽서용지": ["모조지 220g", "랑데부 240g", "몽블랑 240g", "아르떼 310g", "틴토레토 250g", "반포드 250g"],
+    "엽서용지 종류": ["모조지", "랑데부", "몽블랑", "아르떼", "틴토레토", "반포드"],
+    "엽서용지 평량": ["220g", "240g", "250g", "310g"],
     "인쇄방식": ["토너 인쇄", "인디고 인쇄", "디지털 인쇄", "옵셋 인쇄"],
     "인쇄도수": ["단면 4도", "양면 8도", "단면 1도 (흑백)", "양면 2도 (흑백)"],
     "고정사이즈": ["100x148 (표준 엽서)", "105x148 (A6)", "150x150 (정사각)", "100x100 (소형 정사각)", "140x200 (대형 엽서)"],
@@ -595,9 +597,30 @@ MASTER_KEY_RENAMES = {
 # 마스터 목록 관리 화면에서 상품군별로 묶어 보여줄 순서
 MASTER_GROUPS = {
     "스티커": ["스티커 용지", "스티커 접착", "스티커 후지", "스티커 코팅"],
-    "엽서": ["엽서용지", "인쇄방식", "인쇄도수", "고정사이즈"],
+    "엽서": ["엽서용지 종류", "엽서용지 평량", "인쇄방식", "인쇄도수", "고정사이즈"],
     "마스킹 테이프": ["마테타입", "마테가로", "마테세로", "마테도수", "마테포장"],
 }
+
+
+# "모조지 220g" 같은 합쳐진 이름에서 평량(끝의 220g/240g …)만 떼어낸다.
+_WEIGHT_RE = re.compile(r"^(.*?)[ \t]*(\d+\s*g)\s*$", re.IGNORECASE)
+
+
+def split_paper_weight(label):
+    """엽서용지 라벨 하나에서 (종류, 평량)을 뽑는다. 평량이 없으면 종류만 돌려준다."""
+    if not label:
+        return "", ""
+    m = _WEIGHT_RE.match(str(label).strip())
+    if not m:
+        return str(label).strip(), ""
+    return m.group(1).strip(), m.group(2).replace(" ", "").lower()
+
+
+def combine_paper_weight(paper, weight):
+    """(종류, 평량)을 예전과 같은 "모조지 220g" 형식으로 되돌린다."""
+    if paper and weight:
+        return f"{paper} {weight}"
+    return paper or weight
 
 
 def migrate_master_opts(opts):
@@ -616,6 +639,14 @@ def migrate_master_opts(opts):
     # 기본 카테고리가 통째로 없으면 채워 넣는다.
     for k, v in DEFAULT_MASTER_OPTIONS.items():
         opts.setdefault(k, list(v))
+    # 예전 "엽서용지"(예: 모조지 220g)의 항목에서 종류·평량을 뽑아
+    # 새로 나뉜 두 목록에도 채운다. (이미 있는 항목은 건드리지 않는다)
+    for combined in opts.get("엽서용지", []):
+        paper, weight = split_paper_weight(combined)
+        if paper and paper not in opts["엽서용지 종류"]:
+            opts["엽서용지 종류"].append(paper)
+        if weight and weight not in opts["엽서용지 평량"]:
+            opts["엽서용지 평량"].append(weight)
     return opts
 
 
@@ -648,6 +679,20 @@ def master_opts_from_vendors(vendors):
                     items = found.setdefault(master_cat, [])
                     if item not in items:
                         items.append(item)
+    # 엽서 업체의 "제공용지"(예: 모조지 220g)를 종류·평량 마스터에도 반영한다.
+    for v in vendors.get("엽서", []) or []:
+        if not isinstance(v, dict):
+            continue
+        for item in as_list(v.get("제공용지")):
+            paper, weight = split_paper_weight(item)
+            if paper:
+                found.setdefault("엽서용지 종류", [])
+                if paper not in found["엽서용지 종류"]:
+                    found["엽서용지 종류"].append(paper)
+            if weight:
+                found.setdefault("엽서용지 평량", [])
+                if weight not in found["엽서용지 평량"]:
+                    found["엽서용지 평량"].append(weight)
     return found
 
 
@@ -802,6 +847,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-20", "note": "엽서 용지를 종류·평량으로 분리하고, 업체 등록 시 실제 취급하는 (종류 × 평량) 조합만 표에서 골라 저장할 수 있게 개편했습니다. 손님 옵션도 종류/평량 각각 고르는 방식으로 바뀝니다."},
     {"date": "2026-07-20", "note": "화면 설정(색상·버튼 모양)을 개인 설정으로 변경 — 이제 보고 계신 브라우저에만 적용되고 다른 사용자 화면은 바뀌지 않습니다"},
     {"date": "2026-07-20", "note": "공용 재료 목록을 구글 시트에도 저장 — 재배포해도 초기화되지 않습니다. 목록이 비어 있으면 등록된 업체가 쓰는 재료로 자동 복구합니다"},
     {"date": "2026-07-20", "note": "삭제 기능에 관리자 잠금 추가 — 관리자 암호를 설정하면 업체·상품군·공용 재료 삭제는 암호를 아는 사람만 할 수 있습니다 (등록과 수정은 그대로)"},
@@ -1450,14 +1496,63 @@ if st.session_state.page == "settings":
                 edit_fast_ship = st.radio("빠른 배송 가능 여부", ["가능", "불가능"],
                                           index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1, horizontal=True)
 
-            st.markdown("### 2. 인쇄 방식, 도수 및 엽서 용지 다중 선택")
-            ic1, ic2, ic3 = st.columns(3)
+            st.markdown("### 2. 인쇄 방식·도수 및 엽서 용지(종류 × 평량) 선택")
+            ic1, ic2 = st.columns(2)
             with ic1:
                 sel_methods = safe_multiselect("제공 인쇄 방식 (복수 선택)", "인쇄방식", v_data.get("제공인쇄방식"))
             with ic2:
                 sel_colors = safe_multiselect("제공 인쇄 도수 (복수 선택)", "인쇄도수", v_data.get("제공인쇄도수"))
-            with ic3:
-                sel_papers = safe_multiselect("제공 엽서 용지 (복수 선택)", "엽서용지", v_data.get("제공용지"))
+
+            st.markdown("**엽서 용지 — 취급 가능한 종류·평량 조합**")
+            st.caption(
+                "이 업체가 다루는 **용지 종류**와 **평량(g)**을 각각 고른 뒤, 아래 표에서 실제로 "
+                "제공하는 조합에만 체크해 주세요. 조합 하나가 곧 손님이 고를 수 있는 용지 하나입니다. "
+                "새 종류나 평량을 늘리려면 '공용 재료 목록 관리'에서 먼저 추가하세요."
+            )
+            saved_papers = v_data.get("제공용지") or []
+            saved_pairs = {split_paper_weight(x) for x in saved_papers}
+            saved_paper_types = [p for p, _ in saved_pairs if p]
+            saved_weights = [w for _, w in saved_pairs if w]
+
+            pc1, pc2 = st.columns(2)
+            with pc1:
+                sel_paper_types = safe_multiselect(
+                    "취급 용지 종류 (복수)", "엽서용지 종류",
+                    saved_paper_types or None, key=f"post_paper_types_{selected_v_name}",
+                )
+            with pc2:
+                sel_weights = safe_multiselect(
+                    "취급 평량 (복수)", "엽서용지 평량",
+                    saved_weights or None, key=f"post_weights_{selected_v_name}",
+                )
+
+            sel_papers = []
+            if sel_paper_types and sel_weights:
+                combo_rows = []
+                for p in sel_paper_types:
+                    row = {"용지 종류": p}
+                    for w in sel_weights:
+                        row[w] = (p, w) in saved_pairs
+                    combo_rows.append(row)
+                cfg = {"용지 종류": st.column_config.TextColumn("용지 종류", disabled=True)}
+                for w in sel_weights:
+                    cfg[w] = st.column_config.CheckboxColumn(w)
+                edited_pairs = st.data_editor(
+                    pd.DataFrame(combo_rows), column_config=cfg, num_rows="fixed",
+                    hide_index=True, use_container_width=True,
+                    key=f"post_pair_editor_{selected_v_name}",
+                )
+                for r in edited_pairs.to_dict(orient="records"):
+                    p = r.get("용지 종류")
+                    for w in sel_weights:
+                        if r.get(w):
+                            sel_papers.append(combine_paper_weight(p, w))
+                if not sel_papers:
+                    st.warning("표에서 최소 한 조합은 체크해야 합니다.")
+                else:
+                    st.caption(f"✓ 취급 조합 {len(sel_papers)}개: {', '.join(sel_papers)}")
+            else:
+                st.info("취급 용지 종류와 평량을 각각 하나 이상 선택하면 조합 표가 나타납니다.")
 
             st.markdown("### 3. 사이즈 규격 모드 및 재단 여백 공차 설정")
             sc1, sc2, sc3, sc4 = st.columns(4)
@@ -2342,13 +2437,17 @@ def render_step2_generic(product):
 
 def render_step2_postcard():
     vendors = st.session_state.vendors.get("엽서", [])
-    avail_fixed, all_methods, all_colors, all_papers, all_posts = set(), set(), set(), set(), set()
+    avail_fixed, all_methods, all_colors, all_posts = set(), set(), set(), set()
+    all_paper_types, all_weights = set(), set()
     for v in vendors:
         avail_fixed.update(v.get("제공고정사이즈", []))
         all_methods.update(v.get("제공인쇄방식", []))
         all_colors.update(v.get("제공인쇄도수", []))
-        all_papers.update(v.get("제공용지", []))
         all_posts.update(v.get("후가공목록", {}).keys())
+        for combined in v.get("제공용지", []):
+            p, w = split_paper_weight(combined)
+            if p: all_paper_types.add(p)
+            if w: all_weights.add(w)
 
     st.markdown("**사이즈 및 수량**")
     _pills("사이즈 입력 방식", ["고정 사이즈 선택", "자유 사이즈 직접 입력"], "mc_pc_sizemode")
@@ -2365,7 +2464,8 @@ def render_step2_postcard():
     st.markdown("**인쇄 사양**")
     _pills("인쇄 방식", sorted(all_methods), "mc_pc_method")
     _pills("인쇄 도수", sorted(all_colors), "mc_pc_color")
-    _pills("엽서 용지", sorted(all_papers), "mc_pc_paper")
+    _pills("엽서 용지 종류", sorted(all_paper_types), "mc_pc_paper_type")
+    _pills("용지 평량 (g)", sorted(all_weights), "mc_pc_paper_weight")
 
     st.markdown("**특수 인쇄 공정 및 후가공**")
     _pills("화이트 인쇄", ["화이트 인쇄 없음", "화이트 인쇄 필요"], "mc_pc_white")
@@ -2923,11 +3023,13 @@ def render_step3():
         qty = st.session_state.get("mc_pc_qty", 100)
         sel_m = st.session_state.get("mc_pc_method")
         sel_c = st.session_state.get("mc_pc_color")
-        sel_p = st.session_state.get("mc_pc_paper")
+        sel_paper_type = st.session_state.get("mc_pc_paper_type")
+        sel_weight = st.session_state.get("mc_pc_paper_weight")
+        sel_p = combine_paper_weight(sel_paper_type, sel_weight)
         req_white = st.session_state.get("mc_pc_white") == "화이트 인쇄 필요"
         req_rgb = st.session_state.get("mc_pc_profile") == "RGB (웹/모니터 표준)"
         sel_posts = st.session_state.get("mc_pc_posts") or []
-        summary = f"{size_label} · {qty:,}장 · {sel_m} · {sel_c} · {sel_p}"
+        summary = f"{size_label} · {qty:,}장 · {sel_m} · {sel_c} · {sel_p or '(용지 미선택)'}"
         results = calc_postcard_results(size_choice_mode, sel_fixed_str, target_w, target_h, qty,
                                          sel_m, sel_c, sel_p, req_white, req_rgb, sel_posts)
 
