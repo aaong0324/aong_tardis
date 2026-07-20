@@ -737,15 +737,37 @@ def safe_multiselect(label, cat, saved, **kwargs):
     return st.multiselect(label, options, default=default, **kwargs)
 
 
-def find_master_usage(value):
-    """이 값을 쓰고 있는 업체를 찾는다. (마스터 항목 삭제 전 경고용)"""
+def find_master_usage(master_cat, value):
+    """이 마스터 카테고리의 이 값을 쓰고 있는 업체를 찾는다.
+    카테고리를 안 좁히면 '엽서용지 종류의 모조지' vs '스티커 용지의 모조지'가
+    엉겨서 오탐이 난다."""
     hits = []
-    for cat in product_categories():
-        for v in st.session_state.vendors.get(cat, []):
-            for field_val in v.values():
-                if isinstance(field_val, list) and value in field_val:
-                    hits.append(f"{cat} · {v.get('업체명', '이름없음')}")
-                    break
+
+    def _add(prod, v):
+        label = f"{prod} · {v.get('업체명', '이름없음')}"
+        if label not in hits:
+            hits.append(label)
+
+    # 엽서 용지는 저장 형식이 "종류 평량"이라 종류/평량을 각각 뜯어 봐야 한다.
+    if master_cat == "엽서용지 종류":
+        for v in st.session_state.vendors.get("엽서", []) or []:
+            if any(split_paper_weight(x)[0] == value for x in as_list(v.get("제공용지"))):
+                _add("엽서", v)
+        return hits
+    if master_cat == "엽서용지 평량":
+        for v in st.session_state.vendors.get("엽서", []) or []:
+            if any(split_paper_weight(x)[1] == value for x in as_list(v.get("제공용지"))):
+                _add("엽서", v)
+        return hits
+
+    # 일반 케이스: 이 마스터 카테고리를 참조하는 업체 필드만 검사한다.
+    for prod, fields in VENDOR_FIELD_TO_MASTER.items():
+        for field, mcat in fields.items():
+            if mcat != master_cat:
+                continue
+            for v in st.session_state.vendors.get(prod, []) or []:
+                if value in as_list(v.get(field)):
+                    _add(prod, v)
     return hits
 
 # 기본 업체 데이터 (스티커, 엽서, 마스킹테이프 기본 탑재)
@@ -847,6 +869,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-21", "note": "마스터 항목 삭제 시 사용처 안내 오탐 수정 — 이제 엽서 '모조지'를 지우려 하면 스티커 업체가 잘못 걸리지 않고, 엽서용지는 종류/평량을 분해해 정확히 사용 중인 업체만 표시합니다"},
     {"date": "2026-07-20", "note": "엽서 용지를 종류·평량으로 분리하고, 업체 등록 시 실제 취급하는 (종류 × 평량) 조합만 표에서 골라 저장할 수 있게 개편했습니다. 손님 옵션도 종류/평량 각각 고르는 방식으로 바뀝니다."},
     {"date": "2026-07-20", "note": "화면 설정(색상·버튼 모양)을 개인 설정으로 변경 — 이제 보고 계신 브라우저에만 적용되고 다른 사용자 화면은 바뀌지 않습니다"},
     {"date": "2026-07-20", "note": "공용 재료 목록을 구글 시트에도 저장 — 재배포해도 초기화되지 않습니다. 목록이 비어 있으면 등록된 업체가 쓰는 재료로 자동 복구합니다"},
@@ -1096,7 +1119,7 @@ if st.session_state.page == "settings":
                 # 삭제하려는 항목을 쓰고 있는 업체가 있으면 미리 알려준다.
                 blocking = {}
                 for item in removed:
-                    users = find_master_usage(item)
+                    users = find_master_usage(target_cat, item)
                     if users:
                         blocking[item] = users
 
