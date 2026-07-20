@@ -577,7 +577,6 @@ DEFAULT_MASTER_OPTIONS = {
     "스티커 코팅": ["무코팅", "유광코팅", "무광코팅", "스파클코팅", "단면유광"],
     "엽서용지": ["모조지 220g", "랑데부 240g", "몽블랑 240g", "아르떼 310g", "틴토레토 250g", "반포드 250g"],
     "엽서용지 종류": ["모조지", "랑데부", "몽블랑", "아르떼", "틴토레토", "반포드"],
-    "엽서용지 평량": ["220g", "240g", "250g", "310g"],
     "인쇄방식": ["토너 인쇄", "인디고 인쇄", "디지털 인쇄", "옵셋 인쇄"],
     "인쇄도수": ["단면 4도", "양면 8도", "단면 1도 (흑백)", "양면 2도 (흑백)"],
     "고정사이즈": ["100x148 (표준 엽서)", "105x148 (A6)", "150x150 (정사각)", "100x100 (소형 정사각)", "140x200 (대형 엽서)"],
@@ -597,7 +596,7 @@ MASTER_KEY_RENAMES = {
 # 마스터 목록 관리 화면에서 상품군별로 묶어 보여줄 순서
 MASTER_GROUPS = {
     "스티커": ["스티커 용지", "스티커 접착", "스티커 후지", "스티커 코팅"],
-    "엽서": ["엽서용지 종류", "엽서용지 평량", "인쇄방식", "인쇄도수", "고정사이즈"],
+    "엽서": ["엽서용지 종류", "인쇄방식", "인쇄도수", "고정사이즈"],
     "마스킹 테이프": ["마테타입", "마테가로", "마테세로", "마테도수", "마테포장"],
 }
 
@@ -623,6 +622,27 @@ def combine_paper_weight(paper, weight):
     return paper or weight
 
 
+def normalize_weight(value):
+    """평량 입력을 통일한다: 공백 제거, 소문자, 숫자만이면 g를 붙여준다.
+    예: '220 G' -> '220g', '240' -> '240g', '250g' -> '250g'."""
+    s = str(value or "").strip().lower().replace(" ", "")
+    if not s:
+        return ""
+    if s.isdigit():
+        s += "g"
+    return s
+
+
+def parse_weight_list(text):
+    """쉼표로 구분된 평량 문자열을 목록으로. 중복 제거, 입력 순서 유지."""
+    out = []
+    for chunk in str(text or "").split(","):
+        w = normalize_weight(chunk)
+        if w and w not in out:
+            out.append(w)
+    return out
+
+
 def migrate_master_opts(opts):
     """예전 키(용지/접착/후지/코팅)를 새 키(스티커 용지 …)로 옮긴다."""
     if not isinstance(opts, dict):
@@ -639,14 +659,14 @@ def migrate_master_opts(opts):
     # 기본 카테고리가 통째로 없으면 채워 넣는다.
     for k, v in DEFAULT_MASTER_OPTIONS.items():
         opts.setdefault(k, list(v))
-    # 예전 "엽서용지"(예: 모조지 220g)의 항목에서 종류·평량을 뽑아
-    # 새로 나뉜 두 목록에도 채운다. (이미 있는 항목은 건드리지 않는다)
+    # 예전 "엽서용지"(예: 모조지 220g)의 항목에서 종류만 뽑아 새 목록에 채운다.
+    # (평량은 이제 업체별 자유 입력이라 마스터에서 관리하지 않는다)
     for combined in opts.get("엽서용지", []):
-        paper, weight = split_paper_weight(combined)
+        paper, _ = split_paper_weight(combined)
         if paper and paper not in opts["엽서용지 종류"]:
             opts["엽서용지 종류"].append(paper)
-        if weight and weight not in opts["엽서용지 평량"]:
-            opts["엽서용지 평량"].append(weight)
+    # 예전 버전에서 자동 채워졌던 '엽서용지 평량'은 이제 마스터 대상이 아니라 정리한다.
+    opts.pop("엽서용지 평량", None)
     return opts
 
 
@@ -679,20 +699,17 @@ def master_opts_from_vendors(vendors):
                     items = found.setdefault(master_cat, [])
                     if item not in items:
                         items.append(item)
-    # 엽서 업체의 "제공용지"(예: 모조지 220g)를 종류·평량 마스터에도 반영한다.
+    # 엽서 업체의 "제공용지"(예: 모조지 220g)에서 종류만 마스터로 되살린다.
+    # (평량은 이제 업체별 자유 입력이라 마스터가 없다)
     for v in vendors.get("엽서", []) or []:
         if not isinstance(v, dict):
             continue
         for item in as_list(v.get("제공용지")):
-            paper, weight = split_paper_weight(item)
+            paper, _ = split_paper_weight(item)
             if paper:
                 found.setdefault("엽서용지 종류", [])
                 if paper not in found["엽서용지 종류"]:
                     found["엽서용지 종류"].append(paper)
-            if weight:
-                found.setdefault("엽서용지 평량", [])
-                if weight not in found["엽서용지 평량"]:
-                    found["엽서용지 평량"].append(weight)
     return found
 
 
@@ -869,6 +886,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-21", "note": "엽서 용지 평량(g)을 공용 마스터에서 업체별 자유 입력으로 이동 — 업체마다 취급 평량이 다르니 업체 등록 화면에서 쉼표로 구분해 적으시면 됩니다. 종류는 공용 목록 그대로."},
     {"date": "2026-07-21", "note": "마스터 항목 삭제 시 사용처 안내 오탐 수정 — 이제 엽서 '모조지'를 지우려 하면 스티커 업체가 잘못 걸리지 않고, 엽서용지는 종류/평량을 분해해 정확히 사용 중인 업체만 표시합니다"},
     {"date": "2026-07-20", "note": "엽서 용지를 종류·평량으로 분리하고, 업체 등록 시 실제 취급하는 (종류 × 평량) 조합만 표에서 골라 저장할 수 있게 개편했습니다. 손님 옵션도 종류/평량 각각 고르는 방식으로 바뀝니다."},
     {"date": "2026-07-20", "note": "화면 설정(색상·버튼 모양)을 개인 설정으로 변경 — 이제 보고 계신 브라우저에만 적용되고 다른 사용자 화면은 바뀌지 않습니다"},
@@ -1528,14 +1546,19 @@ if st.session_state.page == "settings":
 
             st.markdown("**엽서 용지 — 취급 가능한 종류·평량 조합**")
             st.caption(
-                "이 업체가 다루는 **용지 종류**와 **평량(g)**을 각각 고른 뒤, 아래 표에서 실제로 "
-                "제공하는 조합에만 체크해 주세요. 조합 하나가 곧 손님이 고를 수 있는 용지 하나입니다. "
-                "새 종류나 평량을 늘리려면 '공용 재료 목록 관리'에서 먼저 추가하세요."
+                "이 업체가 다루는 **용지 종류**는 공용 목록에서 여러 개 고르고, **평량(g)**은 "
+                "쉼표로 구분해 이 업체가 취급하는 값만 직접 적어 주세요. "
+                "그 아래 표에서 실제로 제공하는 (종류 × 평량) 칸에만 체크하면 됩니다."
             )
             saved_papers = v_data.get("제공용지") or []
             saved_pairs = {split_paper_weight(x) for x in saved_papers}
             saved_paper_types = [p for p, _ in saved_pairs if p]
-            saved_weights = [w for _, w in saved_pairs if w]
+            # 저장된 평량은 입력한 순서를 되도록 유지 (제공용지 저장 순 따라)
+            saved_weights = []
+            for combined in saved_papers:
+                _, w = split_paper_weight(combined)
+                if w and w not in saved_weights:
+                    saved_weights.append(w)
 
             pc1, pc2 = st.columns(2)
             with pc1:
@@ -1544,10 +1567,14 @@ if st.session_state.page == "settings":
                     saved_paper_types or None, key=f"post_paper_types_{selected_v_name}",
                 )
             with pc2:
-                sel_weights = safe_multiselect(
-                    "취급 평량 (복수)", "엽서용지 평량",
-                    saved_weights or None, key=f"post_weights_{selected_v_name}",
+                weights_default = ", ".join(saved_weights) or "220g, 240g"
+                weights_text = st.text_input(
+                    "취급 평량 (쉼표로 구분, 예: 220g, 240g, 250g)",
+                    value=weights_default,
+                    key=f"post_weights_text_{selected_v_name}",
+                    help="숫자만 적어도 g가 자동으로 붙습니다.",
                 )
+                sel_weights = parse_weight_list(weights_text)
 
             sel_papers = []
             if sel_paper_types and sel_weights:
