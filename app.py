@@ -1,4 +1,6 @@
 import streamlit as st
+import streamlit.components.v1 as components
+from urllib.parse import quote, unquote
 import pandas as pd
 from PIL import Image
 import io
@@ -74,6 +76,101 @@ def save_json(file_path, data):
 def log_error(error_msg):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[오류 로그] {error_msg}\n")
+
+
+# ── 화면 설정(개인 설정) ────────────────────────────────────────────
+# 서버 파일에 저장하면 한 사람이 바꿀 때 모든 사용자 화면이 같이 바뀐다.
+# 그래서 보는 사람의 브라우저 쿠키에 저장한다.
+#
+# 쿠키를 쓰는 이유: Streamlit 컴포넌트는 sandbox iframe이라 부모 창의 주소를
+# 바꿀 수 없다(allow-top-navigation 없음). 반면 같은 출처라 쿠키 쓰기는 되고,
+# 파이썬은 st.context.cookies로 그 값을 읽을 수 있다.
+QP_COLOR, QP_STYLE = "ac", "bs"
+COOKIE_KEY = "aong_view_config"
+
+
+def _valid_color(value):
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v.startswith("#"):
+        v = "#" + v
+    if len(v) == 7 and all(c in "0123456789abcdefABCDEF" for c in v[1:]):
+        return v.lower()
+    return None
+
+
+def _read_config_cookie():
+    """브라우저 쿠키에 기억해둔 설정을 읽는다."""
+    try:
+        raw = st.context.cookies.get(COOKIE_KEY)
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        return json.loads(unquote(raw))
+    except Exception:
+        return {}
+
+
+def load_user_config(base):
+    """이 사람의 화면 설정을 읽는다. 없으면 기본값(base)을 그대로 쓴다.
+    주소에 설정이 붙어 있으면 그쪽을 우선한다(설정을 남에게 공유할 때 쓴다)."""
+    cfg = dict(base)
+    saved = _read_config_cookie()
+
+    color = _valid_color(st.query_params.get(QP_COLOR)) or _valid_color(saved.get("ac"))
+    if color:
+        cfg["primary_color"] = color
+
+    style = st.query_params.get(QP_STYLE) or saved.get("bs")
+    if style in ("default", "round"):
+        cfg["button_style"] = style
+    return cfg
+
+
+def apply_user_config(color, style):
+    """내 설정을 이번 화면에 적용하고, 다음 접속에도 남도록 브라우저에 기억시킨다."""
+    st.session_state.config["primary_color"] = color
+    st.session_state.config["button_style"] = style
+    st.session_state.write_view_cookie = {"ac": color, "bs": style}
+    # 주소에 남아 있던 예전 설정이 새 설정을 덮어쓰지 않게 지운다.
+    for key in (QP_COLOR, QP_STYLE):
+        if key in st.query_params:
+            del st.query_params[key]
+
+
+def clear_user_config():
+    for key in (QP_COLOR, QP_STYLE):
+        if key in st.query_params:
+            del st.query_params[key]
+    st.session_state.write_view_cookie = None   # None이면 쿠키를 지운다
+
+
+def sync_user_config_to_browser():
+    """설정을 브라우저 쿠키에 쓰거나 지운다.
+    컴포넌트는 sandbox iframe이라 부모 주소는 못 바꾸지만 쿠키는 쓸 수 있고,
+    파이썬은 다음 접속 때 st.context.cookies로 그 값을 읽는다."""
+    if "write_view_cookie" not in st.session_state:
+        return
+    payload = st.session_state.pop("write_view_cookie")
+    if payload is None:
+        js_value, max_age = "''", 0
+    else:
+        js_value = json.dumps(quote(json.dumps(payload, ensure_ascii=False)))
+        max_age = 60 * 60 * 24 * 365
+    components.html(
+        f"""
+        <script>
+        try {{
+            window.parent.document.cookie =
+                {COOKIE_KEY!r} + '=' + {js_value} + '; path=/; max-age={max_age}; SameSite=Lax';
+        }} catch (e) {{ /* 쿠키가 막혀 있으면 이번 접속에만 적용된다 */ }}
+        </script>
+        """,
+        height=0,
+    )
 
 # 2-1. 구글 시트 연동 (업체 데이터 공유 저장소)
 # secrets.toml에 gcp_service_account, SHEET_URL이 설정되어 있지 않으면
@@ -705,6 +802,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-20", "note": "화면 설정(색상·버튼 모양)을 개인 설정으로 변경 — 이제 보고 계신 브라우저에만 적용되고 다른 사용자 화면은 바뀌지 않습니다"},
     {"date": "2026-07-20", "note": "공용 재료 목록을 구글 시트에도 저장 — 재배포해도 초기화되지 않습니다. 목록이 비어 있으면 등록된 업체가 쓰는 재료로 자동 복구합니다"},
     {"date": "2026-07-20", "note": "삭제 기능에 관리자 잠금 추가 — 관리자 암호를 설정하면 업체·상품군·공용 재료 삭제는 암호를 아는 사람만 할 수 있습니다 (등록과 수정은 그대로)"},
     {"date": "2026-07-19", "note": "엽서·마스킹 테이프 단가표도 가로형으로 통일 — 수량 구간별 입력, 단위 지정, 할인(음수) 입력 지원"},
@@ -723,7 +821,9 @@ UPDATE_NOTES = [
 if "vendors" not in st.session_state:
     st.session_state.vendors = load_vendors()
 if "config" not in st.session_state:
-    st.session_state.config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
+    # 화면 설정은 개인 취향이므로 서버가 아니라 보는 사람의 브라우저에 저장한다.
+    # config.json은 아직 아무 설정도 하지 않은 사람에게 보여줄 기본값으로만 쓴다.
+    st.session_state.config = load_user_config(load_json(CONFIG_FILE, DEFAULT_CONFIG))
 if "master_opts" not in st.session_state:
     # 구글 시트 → 로컬 파일 → 기본값 순으로 찾는다.
     # (로컬 파일은 재배포 때 초기화되므로 시트에 있으면 그쪽을 믿는다.)
@@ -747,6 +847,8 @@ if "match_product" not in st.session_state:
 
 _WIDE_PAGES = ("settings", "app_settings")
 st.set_page_config(page_title="주문 업체 매칭", layout="wide" if st.session_state.page in _WIDE_PAGES else "centered")
+
+sync_user_config_to_browser()
 
 _ACCENT = st.session_state.config["primary_color"]
 _RADIUS = "15px" if st.session_state.config["button_style"] == "round" else "4px"
@@ -2021,7 +2123,11 @@ elif st.session_state.page == "app_settings":
 
     with tab1:
         st.subheader("화면 색상 및 버튼 스타일 설정")
-        st.write("업체 찾기 화면의 강조 색상과 버튼 모양을 설정합니다.")
+        st.caption(
+            "🙋 **이 설정은 지금 보고 계신 브라우저에만 적용됩니다.** "
+            "다른 분들 화면은 바뀌지 않으니 편하게 바꾸셔도 됩니다. "
+            "같은 브라우저로 다시 접속하시면 고르신 설정이 그대로 유지됩니다."
+        )
 
         col_c1, col_c2 = st.columns(2)
         with col_c1:
@@ -2030,13 +2136,22 @@ elif st.session_state.page == "app_settings":
             new_style = st.radio("버튼 모양 선택", ["default (각진 모양)", "round (둥근 모양)"],
                                  index=0 if st.session_state.config["button_style"] == "default" else 1)
 
-        if st.button("화면 설정 저장 및 즉시 적용"):
-            st.session_state.config["primary_color"] = new_color
-            st.session_state.config["button_style"] = "default" if "default" in new_style else "round"
-
-            if save_json(CONFIG_FILE, st.session_state.config):
-                st.success("화면 설정이 저장되어 바로 적용되었습니다.")
+        btn_c1, btn_c2 = st.columns([2, 1])
+        with btn_c1:
+            if st.button("내 화면에 적용", type="primary", use_container_width=True):
+                apply_user_config(new_color, "default" if "default" in new_style else "round")
                 st.rerun()
+        with btn_c2:
+            if st.button("기본값으로", use_container_width=True):
+                clear_user_config()
+                st.session_state.config = dict(load_json(CONFIG_FILE, DEFAULT_CONFIG))
+                st.rerun()
+
+        _c = st.session_state.config
+        st.caption(
+            "다른 기기에서도 같은 화면으로 보시려면 아래 주소로 접속하시면 됩니다. "
+            f"`?{QP_COLOR}={_c['primary_color'].lstrip('#')}&{QP_STYLE}={_c['button_style']}`"
+        )
 
     with tab2:
         st.subheader("시스템 오류 로그 진단")
