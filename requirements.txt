@@ -1,4 +1,8 @@
-streamlit>=1.40
+streamlit>=1.40,<2
+# streamlit 1.x는 starlette 0.x 대에서 검증돼 있어 상한을 걸어둔다.
+# 이걸 안 걸면 starlette 최신(1.x)이 잡혀 GZipResponder 인자 불일치 등
+# TypeError가 난다.
+starlette<1
 pandas
 pillow
 pymupdf
