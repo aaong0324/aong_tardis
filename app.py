@@ -447,6 +447,77 @@ def qty_range_label(lo, hi):
     return f"{lo}개 이상" if hi >= 999999 else f"{lo}~{hi}개"
 
 
+SM_OPTION_GROUPS = ["색상옵션", "코팅옵션", "추가옵션"]
+SM_OPTION_LABELS = {"색상옵션": "색상", "코팅옵션": "코팅", "추가옵션": "추가 옵션"}
+
+
+def _valid_option(row):
+    return isinstance(row, dict) and str(row.get("이름", "")).strip()
+
+
+def option_rows_for_editor(saved_rows):
+    """저장된 옵션 목록을 data_editor용 표로 만든다. 단위·추가금 기본값을 채워둔다."""
+    out = []
+    for r in saved_rows or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            price = int(r.get("추가금", 0) or 0)
+        except (TypeError, ValueError):
+            price = 0
+        out.append({
+            "이름": str(r.get("이름", "")).strip(),
+            "추가금(원)": price,
+            "단위": r.get("단위") or "개당",
+        })
+    return out
+
+
+def clean_option_rows(edited_df):
+    """편집된 표를 저장 형식으로 정리. 이름이 비어 있는 줄은 버린다."""
+    out = []
+    for r in edited_df.to_dict(orient="records") if edited_df is not None else []:
+        name = str(r.get("이름") or "").strip()
+        if not name:
+            continue
+        try:
+            price = int(r.get("추가금(원)") or 0)
+        except (TypeError, ValueError):
+            price = 0
+        unit = r.get("단위") or "개당"
+        if unit not in ("개당", "건당"):
+            unit = "개당"
+        out.append({"이름": name, "추가금": price, "단위": unit})
+    return out
+
+
+def option_price_add(options, chosen_names, total_qty):
+    """손님이 고른 옵션들의 추가금 총액을 돌려준다."""
+    total = 0
+    by_name = {r["이름"]: r for r in options or [] if _valid_option(r)}
+    for name in chosen_names or []:
+        r = by_name.get(name)
+        if not r:
+            continue
+        price = int(r.get("추가금", 0) or 0)
+        unit = r.get("단위", "개당")
+        total += price * total_qty if unit == "개당" else price
+    return total
+
+
+def option_label(row):
+    """'금색 (+500원 개당)' 형태의 라벨. 추가금 0이면 이름만."""
+    if not _valid_option(row):
+        return ""
+    name = row["이름"]
+    price = int(row.get("추가금", 0) or 0)
+    if not price:
+        return name
+    unit = row.get("단위", "개당")
+    sign = "+" if price > 0 else ""
+    return f"{name} ({sign}{price:,}원 {unit})"
+
+
 def with_particle(word, has_batchim, no_batchim):
     """받침 유무에 따라 조사를 붙인다. (예: 추가금'을' / 단가'를')"""
     if not word:
@@ -886,6 +957,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-07-21", "note": "아크릴 굿즈 등록에 인쇄방식·색상·코팅·추가옵션을 도입했습니다. 단가표는 (인쇄방식 × 사이즈 × 수량) 3축이 되고, 옵션은 이름·추가금·단위(개당/건당)로 자유롭게 등록·검색 시 자동 합산됩니다."},
     {"date": "2026-07-21", "note": "엽서 용지 평량(g)을 공용 마스터에서 업체별 자유 입력으로 이동 — 업체마다 취급 평량이 다르니 업체 등록 화면에서 쉼표로 구분해 적으시면 됩니다. 종류는 공용 목록 그대로."},
     {"date": "2026-07-21", "note": "마스터 항목 삭제 시 사용처 안내 오탐 수정 — 이제 엽서 '모조지'를 지우려 하면 스티커 업체가 잘못 걸리지 않고, 엽서용지는 종류/평량을 분해해 정확히 사용 중인 업체만 표시합니다"},
     {"date": "2026-07-20", "note": "엽서 용지를 종류·평량으로 분리하고, 업체 등록 시 실제 취급하는 (종류 × 평량) 조합만 표에서 골라 저장할 수 있게 개편했습니다. 손님 옵션도 종류/평량 각각 고르는 방식으로 바뀝니다."},
@@ -1772,9 +1844,10 @@ if st.session_state.page == "settings":
             if is_new:
                 v_data = {
                     "업체명": "", "상품명": target_prod,
-                    "세부종류": [], "사이즈목록": [],
+                    "제공인쇄방식": [], "사이즈목록": [],
                     "수량구간": [[1, 9], [10, 99], [100, 499], [500, 999]],
                     "사이즈단가표": [],
+                    "색상옵션": [], "코팅옵션": [], "추가옵션": [],
                     "배송비": 3000, "무료배송액": 50000,
                     "제작기간": "", "빠른배송가능": "불가능",
                 }
@@ -1782,6 +1855,20 @@ if st.session_state.page == "settings":
             else:
                 v_index = vendor_names.index(selected_v_name)
                 v_data = current_vendors[v_index]
+
+            # 예전 데이터 호환: '세부종류' 축으로 저장된 업체는 인쇄방식/색상 옵션으로 옮긴다.
+            legacy_types = v_data.get("세부종류")
+            if legacy_types and not v_data.get("제공인쇄방식"):
+                v_data = dict(v_data)
+                v_data["제공인쇄방식"] = ["기본"]
+                # 색상 옵션에 예전 종류를 (추가금 0으로) 넣어둔다 — 그대로 골라 견적 재현
+                v_data["색상옵션"] = [
+                    {"이름": t, "추가금": 0, "단위": "개당"} for t in legacy_types
+                ]
+                # 단가표는 '종류' 키를 '인쇄방식' = '기본'으로 변환
+                v_data["사이즈단가표"] = [
+                    {**r, "인쇄방식": "기본"} for r in v_data.get("사이즈단가표", [])
+                ]
 
             st.markdown("### 1. 업체 기본 정보")
             with st.container(border=True):
@@ -1803,19 +1890,19 @@ if st.session_state.page == "settings":
                                               index=0 if v_data.get("빠른배송가능", "불가능") == "가능" else 1,
                                               horizontal=True)
 
-            st.markdown("### 2. 세부 종류 · 사이즈 · 수량 구간 정의")
+            st.markdown("### 2. 인쇄 방식 · 사이즈 · 수량 구간 정의")
             st.caption(
-                "업체 페이지의 단가표를 그대로 옮기면 됩니다. 예를 들어 아크릴키링이라면 세부 종류에 "
-                "'투명 / 하프미러 / 글리터 / 자개'를, 사이즈에 '20x20 / 30x15 / …'를 입력합니다. "
-                "여기서 입력한 값이 아래 단가표의 행과 열이 됩니다."
+                "이 업체가 제공하는 **인쇄 방식**과 **사이즈**를 각각 한 줄씩 입력하세요. "
+                "인쇄 방식은 예: '양면 UV / 단면 UV / 무광 UV'. "
+                "여기서 입력한 값이 아래 단가표의 표 개수와 열이 됩니다."
             )
             with st.container(border=True):
                 dc1, dc2 = st.columns(2)
                 with dc1:
-                    types_text = st.text_area(
-                        "세부 종류 — 한 줄에 하나씩",
-                        value="\n".join(v_data.get("세부종류", [])),
-                        placeholder="투명 아크릴\n하프미러 아크릴\n글리터 아크릴\n자개 아크릴",
+                    methods_text = st.text_area(
+                        "인쇄 방식 — 한 줄에 하나씩",
+                        value="\n".join(v_data.get("제공인쇄방식", [])),
+                        placeholder="양면 UV\n단면 UV\n무광 UV",
                         height=170,
                     )
                 with dc2:
@@ -1835,36 +1922,36 @@ if st.session_state.page == "settings":
                     help="'1000+' 처럼 적으면 1000개 이상을 뜻합니다.",
                 )
 
-                sel_types = parse_lines(types_text)
+                sel_methods = parse_lines(methods_text)
                 sel_sizes = parse_lines(sizes_text)
                 qty_ranges = parse_qty_ranges(qty_text)
 
-                if sel_types and sel_sizes and qty_ranges:
+                if sel_methods and sel_sizes and qty_ranges:
                     st.caption(
-                        f"입력됨 · 종류 {len(sel_types)}종 / 사이즈 {len(sel_sizes)}종 / 수량 구간 {len(qty_ranges)}개 "
-                        f"→ 아래에 {len(sel_types)}개의 표가 만들어집니다."
+                        f"입력됨 · 인쇄방식 {len(sel_methods)}종 / 사이즈 {len(sel_sizes)}종 / 수량 구간 {len(qty_ranges)}개 "
+                        f"→ 아래에 {len(sel_methods)}개의 단가표가 만들어집니다."
                     )
 
-            st.markdown("### 3. 종류별 사이즈 × 수량 단가표")
+            st.markdown("### 3. 인쇄 방식별 사이즈 × 수량 단가표")
             edited_tables = {}
-            if not sel_types or not sel_sizes or not qty_ranges:
-                st.info("위에서 세부 종류 · 사이즈 · 수량 구간을 모두 입력하면 단가표가 나타납니다.")
+            if not sel_methods or not sel_sizes or not qty_ranges:
+                st.info("위에서 인쇄 방식 · 사이즈 · 수량 구간을 모두 입력하면 단가표가 나타납니다.")
             else:
                 st.caption(
-                    "칸에 개당 단가(원)를 입력하세요. **0으로 두면 해당 사이즈는 취급하지 않는 것으로 처리됩니다.** "
+                    "칸에 개당 단가(원)를 입력하세요. **0으로 두면 그 사이즈는 취급하지 않는 것으로 처리됩니다.** "
                     "업체 사이트 표에서 숫자 영역을 복사해 붙여넣을 수도 있습니다."
                 )
-                existing = {
-                    (r.get("종류"), r.get("사이즈"), r.get("최소수량"), r.get("최대수량")): r.get("단가", 0)
-                    for r in v_data.get("사이즈단가표", [])
-                }
-                for t in sel_types:
-                    st.markdown(f"**{t}**")
+                existing = {}
+                for r in v_data.get("사이즈단가표", []):
+                    m = r.get("인쇄방식") or r.get("종류")  # 예전 저장 호환
+                    existing[(m, r.get("사이즈"), r.get("최소수량"), r.get("최대수량"))] = r.get("단가", 0)
+                for m in sel_methods:
+                    st.markdown(f"**{m}**")
                     rows = []
                     for lo, hi in qty_ranges:
                         row = {"수량 구간": qty_range_label(lo, hi)}
                         for s in sel_sizes:
-                            row[s] = int(existing.get((t, s, lo, hi), 0) or 0)
+                            row[s] = int(existing.get((m, s, lo, hi), 0) or 0)
                         rows.append(row)
                     df_sm = pd.DataFrame(rows)
 
@@ -1872,11 +1959,40 @@ if st.session_state.page == "settings":
                     for s in sel_sizes:
                         cfg[s] = st.column_config.NumberColumn(s, min_value=0, step=100)
 
-                    edited_tables[t] = st.data_editor(
+                    edited_tables[m] = st.data_editor(
                         df_sm, column_config=cfg, num_rows="fixed", hide_index=True,
                         use_container_width=True,
-                        key=f"sm_{target_prod}_{selected_v_name}_{t}",
+                        key=f"sm_{target_prod}_{selected_v_name}_{m}",
                     )
+
+            st.markdown("### 4. 색상 · 코팅 · 추가 옵션 (선택 시 추가금)")
+            st.caption(
+                "이 업체가 제공하는 옵션을 그룹별로 입력하세요. **추가금이 없다면 0**으로 두시면 됩니다. "
+                "단위 '개당'은 수량만큼 곱해서 더하고, '건당'은 주문 1건에 한 번만 더합니다. "
+                "이름을 비운 줄은 저장되지 않습니다."
+            )
+            edited_options = {}
+            with st.container(border=True):
+                oc1, oc2, oc3 = st.columns(3)
+                for col, group in zip([oc1, oc2, oc3], SM_OPTION_GROUPS):
+                    with col:
+                        st.markdown(f"**{SM_OPTION_LABELS[group]}**")
+                        rows = option_rows_for_editor(v_data.get(group))
+                        if not rows:
+                            rows = [{"이름": "", "추가금(원)": 0, "단위": "개당"}]
+                        df_opt = pd.DataFrame(rows)
+                        edited_options[group] = st.data_editor(
+                            df_opt,
+                            column_config={
+                                "이름": st.column_config.TextColumn("이름"),
+                                "추가금(원)": st.column_config.NumberColumn("추가금(원)", step=100),
+                                "단위": st.column_config.SelectboxColumn(
+                                    "단위", options=["개당", "건당"], required=True,
+                                ),
+                            },
+                            num_rows="dynamic", hide_index=True, use_container_width=True,
+                            key=f"sm_opt_{target_prod}_{selected_v_name}_{group}",
+                        )
 
             st.markdown("---")
             btn_col1, btn_col2 = st.columns([1, 4])
@@ -1892,11 +2008,11 @@ if st.session_state.page == "settings":
                     if not edit_name.strip():
                         st.warning("업체 이름을 반드시 입력해야 합니다.")
                     elif not edited_tables:
-                        st.warning("세부 종류 · 사이즈 · 수량 구간을 먼저 입력해야 저장할 수 있습니다.")
+                        st.warning("인쇄 방식 · 사이즈 · 수량 구간을 먼저 입력해야 저장할 수 있습니다.")
                     else:
                         label_to_range = {qty_range_label(lo, hi): (lo, hi) for lo, hi in qty_ranges}
                         clean_matrix = []
-                        for t, df_edit in edited_tables.items():
+                        for m, df_edit in edited_tables.items():
                             for rec in df_edit.to_dict(orient="records"):
                                 rng = label_to_range.get(rec.get("수량 구간"))
                                 if not rng:
@@ -1909,7 +2025,7 @@ if st.session_state.page == "settings":
                                         val = 0
                                     if val > 0:
                                         clean_matrix.append({
-                                            "종류": t, "사이즈": s,
+                                            "인쇄방식": m, "사이즈": s,
                                             "최소수량": lo, "최대수량": hi, "단가": val,
                                         })
 
@@ -1918,21 +2034,25 @@ if st.session_state.page == "settings":
                         else:
                             updated_v = {
                                 "업체명": edit_name.strip(), "상품명": edit_prod.strip(),
-                                "세부종류": sel_types, "사이즈목록": sel_sizes,
+                                "제공인쇄방식": sel_methods, "사이즈목록": sel_sizes,
                                 "수량구간": [[lo, hi] for lo, hi in qty_ranges],
                                 "사이즈단가표": clean_matrix,
                                 "배송비": edit_ship, "무료배송액": edit_free_ship,
                                 "제작기간": edit_lead_time.strip(), "빠른배송가능": edit_fast_ship,
                             }
+                            for group in SM_OPTION_GROUPS:
+                                updated_v[group] = clean_option_rows(edited_options.get(group))
                             if is_new:
                                 st.session_state.vendors[target_prod].append(updated_v)
                             else:
                                 st.session_state.vendors[target_prod][v_index] = updated_v
 
                             if save_vendors(st.session_state.vendors):
+                                opt_total = sum(len(updated_v[g]) for g in SM_OPTION_GROUPS)
                                 st.success(
                                     f"[{edit_name}] 저장 완료. 단가 {len(clean_matrix)}건 "
-                                    f"({len(sel_types)}종 × {len(sel_sizes)}사이즈 × {len(qty_ranges)}구간 중 입력된 칸)"
+                                    f"({len(sel_methods)}인쇄방식 × {len(sel_sizes)}사이즈 × {len(qty_ranges)}구간) · "
+                                    f"옵션 {opt_total}개"
                                 )
                                 st.rerun()
 
@@ -1941,10 +2061,13 @@ if st.session_state.page == "settings":
             sm_summary = []
             for v in current_vendors:
                 prices = [r.get("단가", 0) for r in v.get("사이즈단가표", [])]
+                methods = v.get("제공인쇄방식") or v.get("세부종류") or []
+                opt_count = sum(len(v.get(g, [])) for g in SM_OPTION_GROUPS)
                 sm_summary.append({
                     "업체명": v.get("업체명", ""), "상품명": v.get("상품명", ""),
-                    "세부종류": ", ".join(v.get("세부종류", [])),
+                    "인쇄방식": ", ".join(methods),
                     "사이즈수": f"{len(v.get('사이즈목록', []))}종",
+                    "옵션": f"{opt_count}개" if opt_count else "-",
                     "단가 범위": f"{min(prices):,}~{max(prices):,} 원" if prices else "-",
                     "제작기간": v.get("제작기간", "-"),
                     "빠른배송": v.get("빠른배송가능", "불가능"),
@@ -2551,26 +2674,50 @@ def render_step2_size_matrix(product):
     """사이즈별 단가표를 쓰는 카테고리(아크릴 굿즈 등)의 옵션 선택 화면."""
     vendors = st.session_state.vendors.get(product, [])
 
-    all_types = set()
+    all_methods = set()
     for v in vendors:
-        all_types.update(v.get("세부종류", []))
+        all_methods.update(v.get("제공인쇄방식") or v.get("세부종류") or [])
 
-    st.markdown("**종류 선택**")
-    _pills("종류", sorted(all_types), "mc_sm_type")
-    selected_type = st.session_state.get("mc_sm_type")
+    st.markdown("**인쇄 방식**")
+    _pills("인쇄 방식", sorted(all_methods), "mc_sm_method")
+    selected_method = st.session_state.get("mc_sm_method")
 
-    # 고른 종류에서 실제로 단가가 등록된 사이즈만 보여준다.
+    # 고른 인쇄방식에서 실제로 단가가 등록된 사이즈만 보여준다.
     all_sizes = set()
     for v in vendors:
         for row in v.get("사이즈단가표", []):
-            if row.get("종류") == selected_type:
+            row_method = row.get("인쇄방식") or row.get("종류")
+            if row_method == selected_method:
                 all_sizes.add(row.get("사이즈", ""))
     all_sizes.discard("")
 
-    st.markdown("**사이즈 선택**")
+    st.markdown("**사이즈**")
     _pills("사이즈", sorted(all_sizes), "mc_sm_size")
 
     st.number_input("총 제작 수량 (개)", min_value=1, value=50, step=10, key="mc_sm_qty")
+
+    # 등록된 업체들이 제공하는 색상·코팅·추가옵션 라벨을 모아 보여준다.
+    for group, key, mode in [("색상옵션", "mc_sm_color", "single"),
+                             ("코팅옵션", "mc_sm_coat", "single"),
+                             ("추가옵션", "mc_sm_extras", "multi")]:
+        by_label = {}
+        for v in vendors:
+            for r in v.get(group, []) or []:
+                lbl = option_label(r)
+                if lbl and lbl not in by_label:
+                    by_label[lbl] = r["이름"]
+        if not by_label:
+            continue
+        st.markdown(f"**{SM_OPTION_LABELS[group]}**")
+        labels = list(by_label.keys())
+        if mode == "multi":
+            st.pills(SM_OPTION_LABELS[group], labels, selection_mode="multi",
+                     default=[], key=key + "_label")
+            st.session_state[key] = [by_label[l] for l in st.session_state.get(key + "_label", []) or []]
+        else:
+            _pills(SM_OPTION_LABELS[group], labels, key + "_label")
+            picked = st.session_state.get(key + "_label")
+            st.session_state[key] = by_label.get(picked) if picked else None
 
 
 def render_step2():
@@ -2974,40 +3121,55 @@ def calc_tape_results(user_type, user_w, user_h, total_qty, user_color, user_pac
     return sorted(results, key=lambda x: x["최종총가격"])
 
 
-def calc_size_matrix_results(product, goods_type, size, total_qty):
-    """사이즈별 단가표 카테고리의 업체별 최종가를 계산한다."""
+def calc_size_matrix_results(product, method, size, total_qty,
+                              sel_color=None, sel_coat=None, sel_extras=None):
+    """사이즈별 단가표 카테고리의 업체별 최종가를 계산한다.
+    method(인쇄방식) 축은 새 구조. 옛 저장은 '종류' 키로 남아 있을 수 있어 함께 본다.
+    색상/코팅/추가옵션은 손님이 고른 항목의 추가금을 합산한다."""
     vendors = st.session_state.vendors.get(product, [])
     results = []
     for v in vendors:
         unit_price = None
         for row in v.get("사이즈단가표", []):
-            if row.get("종류") != goods_type or row.get("사이즈") != size:
+            row_method = row.get("인쇄방식") or row.get("종류")  # 예전 저장 호환
+            if row_method != method or row.get("사이즈") != size:
                 continue
             if row.get("최소수량", 1) <= total_qty <= row.get("최대수량", 999999):
                 unit_price = row.get("단가", 0)
                 break
-        # 해당 종류·사이즈·수량 구간에 단가가 없으면 취급하지 않는 것으로 본다.
+        # 해당 인쇄방식·사이즈·수량 구간에 단가가 없으면 취급하지 않는 것으로 본다.
         if not unit_price:
             continue
 
         print_total = total_qty * unit_price
+        opt_add = 0
+        opt_add += option_price_add(v.get("색상옵션"), [sel_color] if sel_color else [], total_qty)
+        opt_add += option_price_add(v.get("코팅옵션"), [sel_coat] if sel_coat else [], total_qty)
+        opt_add += option_price_add(v.get("추가옵션"), sel_extras or [], total_qty)
+
+        subtotal = print_total + opt_add
         ship_fee = v.get("배송비", 0)
-        if v.get("무료배송액", 0) > 0 and print_total >= v.get("무료배송액", 0):
+        if v.get("무료배송액", 0) > 0 and subtotal >= v.get("무료배송액", 0):
             ship_fee = 0
-        final_total = print_total + ship_fee
+        final_total = subtotal + ship_fee
 
         badges = [
-            f"{goods_type} · {size}",
+            f"{method} · {size}",
             f"개당 {unit_price:,}원",
             "무료배송" if ship_fee == 0 else f"배송비 {ship_fee:,}원",
         ]
+        if opt_add:
+            badges.append(f"옵션 +{opt_add:,}원")
         badges.extend(_lead_badges(v))
 
+        note_parts = [f"{total_qty:,}개 × {unit_price:,}원 = {print_total:,}원"]
+        if opt_add:
+            note_parts.append(f"옵션 추가금 {opt_add:,}원")
         results.append({
             "업체명": f"{v.get('업체명', '')} ({v.get('상품명', '')})",
             "최종총가격": final_total,
             "badges": badges,
-            "note": f"{total_qty:,}개 × {unit_price:,}원 = 제작비 {print_total:,}원",
+            "note": " · ".join(note_parts),
         })
     return sorted(results, key=lambda x: x["최종총가격"])
 
@@ -3084,11 +3246,18 @@ def render_step3():
                                          sel_m, sel_c, sel_p, req_white, req_rgb, sel_posts)
 
     elif ptype == "size_matrix":
-        goods_type = st.session_state.get("mc_sm_type")
+        method = st.session_state.get("mc_sm_method") or st.session_state.get("mc_sm_type")
         size = st.session_state.get("mc_sm_size")
         qty = st.session_state.get("mc_sm_qty", 50)
-        summary = f"{goods_type or '종류 미선택'} · {size or '사이즈 미선택'} · {qty:,}개"
-        results = calc_size_matrix_results(product, goods_type, size, qty)
+        sel_color = st.session_state.get("mc_sm_color")
+        sel_coat = st.session_state.get("mc_sm_coat")
+        sel_extras = st.session_state.get("mc_sm_extras") or []
+        opt_parts = [x for x in [sel_color, sel_coat] if x] + list(sel_extras)
+        opt_str = f" · {'/'.join(opt_parts)}" if opt_parts else ""
+        summary = f"{method or '인쇄방식 미선택'} · {size or '사이즈 미선택'} · {qty:,}개{opt_str}"
+        results = calc_size_matrix_results(product, method, size, qty,
+                                            sel_color=sel_color, sel_coat=sel_coat,
+                                            sel_extras=sel_extras)
 
     else:
         size_w = st.session_state.get("mc_gen_w", 50)
