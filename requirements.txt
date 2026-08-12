@@ -8,3 +8,4 @@ pillow
 pymupdf
 gspread
 google-auth
+openpyxl

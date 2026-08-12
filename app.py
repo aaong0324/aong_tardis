@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 from urllib.parse import quote, unquote
+import datetime
 import pandas as pd
 from PIL import Image
 import io
@@ -269,6 +270,108 @@ def admin_unlocked():
     if admin_password() is None:
         return True
     return bool(st.session_state.get("is_admin"))
+
+
+# ── 엑셀 백업/복원 ──────────────────────────────────────────────
+# 상품군마다 스키마가 크게 달라, 사람이 훑는 요약 컬럼과 왕복 가능한
+# JSON 컬럼을 함께 두는 방식으로 처리한다. 불러오기는 JSON 컬럼만 읽어
+# 어떤 상품군 스키마 변경에도 안전하게 왕복한다.
+DATA_COL = "_데이터_JSON"
+
+
+def _vendor_summary(cat, v):
+    """엑셀 왼쪽에 놓을 사람이 훑기 좋은 요약."""
+    if not isinstance(v, dict):
+        return {}
+    row = {
+        "업체명": v.get("업체명", ""),
+        "상품명": v.get("상품명", ""),
+        "제작기간": v.get("제작기간", ""),
+        "빠른배송": v.get("빠른배송가능", ""),
+        "배송비": v.get("배송비", ""),
+        "무료배송액": v.get("무료배송액", ""),
+    }
+    if cat == "스티커":
+        row["단가규칙수"] = len(v.get("조합단가표", []))
+    elif cat == "엽서":
+        row["단가규칙수"] = len(v.get("조합단가표", []))
+        row["제공용지수"] = len(v.get("제공용지", []))
+    elif cat == "마스킹 테이프":
+        row["단가규칙수"] = len(v.get("조합단가표", []))
+    else:  # size_matrix 계열
+        row["단가줄수"] = len(v.get("사이즈단가표", []))
+        row["사이즈수"] = len(v.get("사이즈목록", []))
+        row["옵션수"] = sum(len(v.get(g, [])) for g in ("색상옵션", "코팅옵션", "추가옵션"))
+    return row
+
+
+def vendors_to_xlsx_bytes(vendors):
+    """업체 데이터를 여러 시트로 엑셀 파일로 만든다. 반환은 bytes."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        # 상품군별 워크시트
+        for cat in vendors:
+            if cat == META_KEY:
+                continue
+            rows = []
+            for v in vendors.get(cat) or []:
+                summary = _vendor_summary(cat, v)
+                summary[DATA_COL] = json.dumps(v, ensure_ascii=False)
+                rows.append(summary)
+            if not rows:
+                # 빈 상품군도 시트를 남겨 카테고리 존재를 보존한다.
+                rows = [{"업체명": "(등록된 업체 없음)", DATA_COL: ""}]
+            df = pd.DataFrame(rows)
+            # 엑셀 시트명 31자 제한 대응
+            sheet = cat[:31] or "시트"
+            df.to_excel(writer, sheet_name=sheet, index=False)
+        # 메타는 별도 시트에 통째로 JSON 한 줄
+        meta = vendors.get(META_KEY)
+        if isinstance(meta, dict):
+            pd.DataFrame([{DATA_COL: json.dumps(meta, ensure_ascii=False)}]).to_excel(
+                writer, sheet_name="__meta__", index=False,
+            )
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def xlsx_bytes_to_vendors(data_bytes):
+    """엑셀 파일을 파싱해 vendors 사전을 만든다. JSON 컬럼만 신뢰한다."""
+    xf = pd.ExcelFile(io.BytesIO(data_bytes), engine="openpyxl")
+    out = {}
+    errors = []
+    for sheet in xf.sheet_names:
+        df = xf.parse(sheet)
+        if DATA_COL not in df.columns:
+            errors.append(f"시트 [{sheet}]: '{DATA_COL}' 열이 없어 건너뜁니다.")
+            continue
+        if sheet == "__meta__":
+            for raw in df[DATA_COL].dropna():
+                s = str(raw).strip()
+                if s:
+                    try:
+                        out[META_KEY] = json.loads(s)
+                    except Exception as e:
+                        errors.append(f"__meta__ JSON 파싱 실패: {e}")
+                    break
+            continue
+        parsed = []
+        for i, raw in enumerate(df[DATA_COL], start=2):  # 엑셀 행 번호(헤더 포함)
+            if raw is None:
+                continue
+            s = str(raw).strip()
+            if not s or s == "nan":
+                continue
+            try:
+                obj = json.loads(s)
+                if isinstance(obj, dict):
+                    parsed.append(obj)
+                else:
+                    errors.append(f"시트 [{sheet}] 행 {i}: JSON이 dict가 아님")
+            except Exception as e:
+                errors.append(f"시트 [{sheet}] 행 {i}: JSON 파싱 실패 - {e}")
+        out[sheet] = parsed
+    return out, errors
 
 
 def render_admin_lock():
@@ -957,6 +1060,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-08-12", "note": "관리 콘솔에 엑셀(xlsx) 백업·복원 기능이 추가되었습니다. 현재 데이터 전체를 파일로 내려받거나, 편집한 파일을 올려 한 번에 반영할 수 있습니다. 복원은 관리자 잠금이 걸립니다."},
     {"date": "2026-07-21", "note": "아크릴 굿즈 등록에 인쇄방식·색상·코팅·추가옵션을 도입했습니다. 단가표는 (인쇄방식 × 사이즈 × 수량) 3축이 되고, 옵션은 이름·추가금·단위(개당/건당)로 자유롭게 등록·검색 시 자동 합산됩니다."},
     {"date": "2026-07-21", "note": "엽서 용지 평량(g)을 공용 마스터에서 업체별 자유 입력으로 이동 — 업체마다 취급 평량이 다르니 업체 등록 화면에서 쉼표로 구분해 적으시면 됩니다. 종류는 공용 목록 그대로."},
     {"date": "2026-07-21", "note": "마스터 항목 삭제 시 사용처 안내 오탐 수정 — 이제 엽서 '모조지'를 지우려 하면 스티커 업체가 잘못 걸리지 않고, 엽서용지는 종류/평량을 분해해 정확히 사용 중인 업체만 표시합니다"},
@@ -1169,6 +1273,68 @@ if st.session_state.page == "settings":
                 st.session_state.vendors = load_vendors()
                 st.success("구글 시트의 최신 업체 데이터를 반영했습니다.")
                 st.rerun()
+
+        with st.expander("📥 엑셀로 업체 정보 백업 · 복원", expanded=False):
+            st.caption(
+                "상품군마다 워크시트 하나가 만들어지고, 앞쪽에는 업체명·배송비 같은 요약이, "
+                "마지막 `_데이터_JSON` 열에는 앱이 저장하는 형식 그대로 담깁니다. "
+                "다시 불러올 때는 `_데이터_JSON` 열만 사용해 어떤 스키마 변경에도 안전하게 왕복합니다."
+            )
+            ex_col1, ex_col2 = st.columns(2)
+            with ex_col1:
+                st.markdown("**⬇️ 내보내기**")
+                try:
+                    xlsx = vendors_to_xlsx_bytes(st.session_state.vendors)
+                    st.download_button(
+                        "현재 업체 데이터를 xlsx로 저장",
+                        data=xlsx,
+                        file_name=f"vendors_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"엑셀 생성 실패: {e}")
+
+            with ex_col2:
+                st.markdown("**⬆️ 불러오기**")
+                st.caption(
+                    "업로드한 파일의 내용으로 **현재 업체 데이터를 완전히 대체**합니다. "
+                    "실수 방지를 위해 관리자 잠금 해제가 필요합니다."
+                )
+                upload = st.file_uploader(
+                    "xlsx 파일 선택", type=["xlsx"], key="vendor_import_uploader",
+                    disabled=not admin_unlocked(),
+                )
+                if upload is not None:
+                    try:
+                        new_data, errors = xlsx_bytes_to_vendors(upload.getvalue())
+                    except Exception as e:
+                        st.error(f"엑셀 읽기 실패: {e}")
+                        new_data, errors = None, []
+                    if new_data is not None:
+                        stats = {k: len(v) for k, v in new_data.items() if k != META_KEY}
+                        st.info(
+                            f"파일 검사 결과 · 상품군 {len(stats)}개 / "
+                            f"업체 총 {sum(stats.values())}곳"
+                        )
+                        if errors:
+                            for e in errors[:10]:
+                                st.warning(e)
+                            if len(errors) > 10:
+                                st.caption(f"… 외 {len(errors)-10}건 생략")
+
+                        if st.button(
+                            "확인 · 위 내용으로 덮어쓰기",
+                            type="primary",
+                            disabled=not admin_unlocked(),
+                            key="confirm_import_vendors",
+                        ):
+                            st.session_state.vendors = new_data
+                            if save_vendors(st.session_state.vendors):
+                                st.success(
+                                    f"불러오기 완료. 상품군 {len(stats)}개, 업체 {sum(stats.values())}곳을 반영했습니다."
+                                )
+                                st.rerun()
 
         with st.expander("🧾 공용 재료·공정 목록 관리 (업체 등록 화면에서 고를 수 있는 항목)", expanded=False):
             st.caption(
