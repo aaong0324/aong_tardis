@@ -277,6 +277,161 @@ def admin_unlocked():
 # JSON 컬럼을 함께 두는 방식으로 처리한다. 불러오기는 JSON 컬럼만 읽어
 # 어떤 상품군 스키마 변경에도 안전하게 왕복한다.
 DATA_COL = "_데이터_JSON"
+ROW_MARK_COL = "_행유형"   # 설명/예시 행에 표시. 실제 데이터 행은 비워둠
+
+
+# ── 카테고리별 필드 스펙 ────────────────────────────────────────
+# 템플릿 xlsx 생성과 요약 컬럼 → dict 조합에 쓴다.
+# 각 필드: name / example / help / type (str|int|list|json) / when(선택)
+def _J(spec):
+    """리스트/딕셔너리는 사람이 편집하기 어려우므로 JSON 문자열로 다룬다."""
+    return dict(spec, type="json")
+
+
+CATEGORY_FIELD_SPECS = {
+    "sticker": [
+        {"name": "업체명", "type": "str", "example": "우주 프린팅", "help": "필수"},
+        {"name": "과금방식", "type": "str", "example": "수량별 장당 단가",
+         "help": "'1판 자유 배치' 또는 '수량별 장당 단가'"},
+        {"name": "단가결정방식", "type": "str", "example": "기준단가 + 옵션 추가금 합산",
+         "help": "'기준단가 + 옵션 추가금 합산' 또는 '옵션 조합별 단가 직접 설정'"},
+        {"name": "기준단가", "type": "int", "example": 50000,
+         "help": "단가결정방식='기준단가 + 옵션 추가금 합산'일 때 사용"},
+        {"name": "판가로", "type": "int", "example": 1000,
+         "help": "과금방식='1판 자유 배치'일 때만 사용 (mm)"},
+        {"name": "판세로", "type": "int", "example": 500,
+         "help": "과금방식='1판 자유 배치'일 때만 사용 (mm)"},
+        {"name": "화이트인쇄", "type": "str", "example": "지원 가능",
+         "help": "'지원 가능' 또는 '지원 불가'"},
+        {"name": "색상프로필", "type": "str", "example": "CMYK + RGB 겸용",
+         "help": "'CMYK 전용' 또는 'CMYK + RGB 겸용'"},
+        {"name": "반칼과금유형", "type": "str", "example": "기본가에 포함",
+         "help": "'기본가에 포함' / '별도 필수 과금' / '선택 옵션 추가금'"},
+        {"name": "반칼추가금", "type": "int", "example": 0,
+         "help": "반칼과금유형이 '기본가에 포함'이 아닐 때 사용"},
+        {"name": "완칼과금유형", "type": "str", "example": "별도 필수 과금",
+         "help": "'기본가에 포함' / '별도 필수 과금' / '선택 옵션 추가금'"},
+        {"name": "완칼추가금", "type": "int", "example": 5000,
+         "help": "완칼과금유형이 '기본가에 포함'이 아닐 때 사용"},
+        {"name": "최소재단기준", "type": "str", "example": "가로/세로 각각 기준",
+         "help": "'가로/세로 각각 기준' 또는 '가로+세로 합계 기준'"},
+        {"name": "최소재단가로", "type": "int", "example": 10, "help": "가로/세로 각각 기준일 때"},
+        {"name": "최소재단세로", "type": "int", "example": 10, "help": "가로/세로 각각 기준일 때"},
+        {"name": "최소재단합계", "type": "int", "example": 20, "help": "가로+세로 합계 기준일 때"},
+        {"name": "반칼간거리", "type": "float", "example": 2.0, "help": "mm"},
+        {"name": "완칼간거리_동일색", "type": "float", "example": 3.0, "help": "mm"},
+        {"name": "완칼간거리_다른색", "type": "float", "example": 5.0, "help": "mm"},
+        {"name": "이미지반칼거리", "type": "float", "example": 2.0, "help": "mm"},
+        {"name": "완칼반칼거리", "type": "float", "example": 3.0, "help": "mm"},
+        {"name": "반칼최소가로", "type": "float", "example": 5.0, "help": "mm"},
+        {"name": "반칼최소세로", "type": "float", "example": 5.0, "help": "mm"},
+        {"name": "반칼색상", "type": "str", "example": "마젠타(M100)", "help": ""},
+        {"name": "완칼색상", "type": "str", "example": "블랙(K100)", "help": ""},
+        {"name": "재단선마크", "type": "str", "example": "필요 없음", "help": ""},
+        {"name": "칼선굵기", "type": "float", "example": 0.25, "help": "pt"},
+        {"name": "배송비", "type": "int", "example": 3000, "help": "원"},
+        {"name": "무료배송액", "type": "int", "example": 50000, "help": "원, 0=없음"},
+        {"name": "제작기간", "type": "str", "example": "영업일 기준 3~5일", "help": ""},
+        {"name": "빠른배송가능", "type": "str", "example": "가능", "help": "'가능' 또는 '불가능'"},
+        _J({"name": "제공용지", "example": "일반아트지, 크라프트지",
+            "help": "쉼표로 구분해 여러 개"}),
+        _J({"name": "제공접착", "example": "일반영구접착, 리무버블(재박리)", "help": "쉼표로 구분"}),
+        _J({"name": "제공후지", "example": "백색후지, 투명후지", "help": "쉼표로 구분"}),
+        _J({"name": "제공코팅", "example": "무코팅, 유광", "help": "쉼표로 구분"}),
+        _J({"name": "조합단가표", "example": "(단가표는 JSON 컬럼에서 편집)",
+            "help": "구조가 복잡해 반드시 _데이터_JSON 컬럼에서 편집합니다"}),
+    ],
+    "postcard": [
+        {"name": "업체명", "type": "str", "example": "엽서프린팅", "help": "필수"},
+        {"name": "상품명", "type": "str", "example": "일반 엽서", "help": ""},
+        {"name": "과금기준", "type": "str", "example": "장수 제작",
+         "help": "'장수 제작' 또는 '판 제작'"},
+        {"name": "단가결정방식", "type": "str", "example": "옵션 조합별 단가 직접 설정",
+         "help": "'옵션 조합별 단가 직접 설정' 또는 '기준단가 + 옵션 추가금 합산'"},
+        {"name": "기준단가", "type": "int", "example": 0,
+         "help": "단가결정방식='기준단가 + 옵션 추가금 합산'일 때"},
+        {"name": "사이즈모드", "type": "str", "example": "고정 + 자유 겸용",
+         "help": "'고정 사이즈 전용' / '자유 사이즈 전용' / '고정 + 자유 겸용'"},
+        {"name": "최소가로", "type": "int", "example": 80, "help": "자유 사이즈일 때 (mm)"},
+        {"name": "최소세로", "type": "int", "example": 80, "help": "자유 사이즈일 때 (mm)"},
+        {"name": "최대가로", "type": "int", "example": 210, "help": "자유 사이즈일 때 (mm)"},
+        {"name": "최대세로", "type": "int", "example": 297, "help": "자유 사이즈일 때 (mm)"},
+        {"name": "편집여백플러스", "type": "float", "example": 3.0, "help": "mm"},
+        {"name": "안전여백마이너스", "type": "float", "example": 3.0, "help": "mm"},
+        {"name": "재단비유형", "type": "str", "example": "포함",
+         "help": "'포함' 또는 '별도 설정'"},
+        {"name": "재단비별도", "type": "int", "example": 0, "help": "별도 설정일 때 (원)"},
+        {"name": "색상프로필", "type": "str", "example": "CMYK + RGB 겸용", "help": ""},
+        {"name": "화이트인쇄", "type": "str", "example": "지원 불가", "help": ""},
+        {"name": "배송비", "type": "int", "example": 3000, "help": ""},
+        {"name": "무료배송액", "type": "int", "example": 30000, "help": "0=없음"},
+        {"name": "제작기간", "type": "str", "example": "영업일 3~5일", "help": ""},
+        {"name": "빠른배송가능", "type": "str", "example": "불가능", "help": ""},
+        _J({"name": "제공인쇄방식", "example": "인디고 인쇄, 디지털 인쇄", "help": "쉼표로 구분"}),
+        _J({"name": "제공인쇄도수", "example": "단면 4도, 양면 8도", "help": "쉼표로 구분"}),
+        _J({"name": "제공용지", "example": "모조지 220g, 랑데부 240g",
+            "help": "쉼표로 구분. '종류 평량' 형태 (예: 모조지 220g)"}),
+        _J({"name": "제공고정사이즈", "example": "100x148 (표준 엽서)",
+            "help": "사이즈모드에 '고정'이 포함될 때. 쉼표로 구분"}),
+        _J({"name": "후가공목록", "example": "(JSON에서 편집)",
+            "help": "이름별 {기본,수량당} 사전 구조. _데이터_JSON에서 편집"}),
+        _J({"name": "조합단가표", "example": "(JSON에서 편집)",
+            "help": "구조가 복잡. _데이터_JSON에서 편집"}),
+    ],
+    "tape": [
+        {"name": "업체명", "type": "str", "example": "마테프린팅", "help": "필수"},
+        {"name": "상품명", "type": "str", "example": "일반 마테", "help": ""},
+        {"name": "세로편집추가", "type": "float", "example": 1.5, "help": "mm"},
+        {"name": "라벨포장여부", "type": "str", "example": "지원 가능",
+         "help": "'지원 가능' 또는 '지원 불가'"},
+        {"name": "타입별라벨차등", "type": "str", "example": "아니오", "help": "'예' 또는 '아니오'"},
+        {"name": "라벨편집가로", "type": "float", "example": 40.0, "help": "mm"},
+        {"name": "라벨편집세로", "type": "float", "example": 40.0, "help": "mm"},
+        {"name": "라벨재단가로", "type": "float", "example": 38.0, "help": "mm"},
+        {"name": "라벨재단세로", "type": "float", "example": 38.0, "help": "mm"},
+        {"name": "라벨안전가로", "type": "float", "example": 34.0, "help": "mm"},
+        {"name": "라벨안전세로", "type": "float", "example": 34.0, "help": "mm"},
+        {"name": "배송비", "type": "int", "example": 3000, "help": ""},
+        {"name": "무료배송액", "type": "int", "example": 50000, "help": "0=없음"},
+        {"name": "제작기간", "type": "str", "example": "영업일 7~10일", "help": ""},
+        {"name": "빠른배송가능", "type": "str", "example": "불가능", "help": ""},
+        _J({"name": "제공타입", "example": "일반 종이 마테, 박 마테 (금박)", "help": "쉼표로 구분"}),
+        _J({"name": "제공가로", "example": "5m, 10m", "help": "쉼표로 구분"}),
+        _J({"name": "제공세로", "example": "15mm, 20mm, 25mm", "help": "쉼표로 구분"}),
+        _J({"name": "제공도수", "example": "단면 4도", "help": "쉼표로 구분"}),
+        _J({"name": "제공포장", "example": "수축 튜브 포장, 라벨스티커 스포 포장", "help": "쉼표로 구분"}),
+        _J({"name": "타입별라벨설정", "example": "(JSON에서 편집)",
+            "help": "타입별라벨차등='예'일 때만. _데이터_JSON에서"}),
+        _J({"name": "조합단가표", "example": "(JSON에서 편집)",
+            "help": "포장방법 × 수량 구간 단가. _데이터_JSON에서 편집"}),
+    ],
+    "size_matrix": [
+        {"name": "업체명", "type": "str", "example": "올댓프린팅", "help": "필수"},
+        {"name": "상품명", "type": "str", "example": "아크릴 키링", "help": ""},
+        {"name": "배송비", "type": "int", "example": 3000, "help": ""},
+        {"name": "무료배송액", "type": "int", "example": 50000, "help": "0=없음"},
+        {"name": "제작기간", "type": "str", "example": "영업일 7~10일", "help": ""},
+        {"name": "빠른배송가능", "type": "str", "example": "불가능", "help": ""},
+        _J({"name": "제공인쇄방식", "example": "일반, 라미", "help": "쉼표로 구분"}),
+        _J({"name": "사이즈목록", "example": "20*20, 30*15, 30*30", "help": "쉼표로 구분"}),
+        _J({"name": "수량구간", "example": "1-9, 10-99, 100-499",
+            "help": "쉼표로 구분. '1000+'는 1000개 이상"}),
+        _J({"name": "사이즈단가표", "example": "(JSON에서 편집)",
+            "help": "인쇄방식×사이즈×수량 조합별 단가. _데이터_JSON에서 편집"}),
+        _J({"name": "색상옵션", "example": "(JSON에서 편집)",
+            "help": "이름·추가금·단위 목록. _데이터_JSON에서 편집"}),
+        _J({"name": "코팅옵션", "example": "(JSON에서 편집)", "help": "동일"}),
+        _J({"name": "추가옵션", "example": "(JSON에서 편집)", "help": "동일"}),
+    ],
+}
+
+# 화면에 보여줄 상품군 라벨 (내부 타입 → 사람이 읽기 좋은 이름)
+CATEGORY_TYPE_KOR = {
+    "sticker": "스티커형",
+    "postcard": "엽서형",
+    "tape": "마스킹 테이프형",
+    "size_matrix": "사이즈별 단가표 (아크릴 굿즈 등)",
+}
 
 
 def _vendor_summary(cat, v):
@@ -335,42 +490,202 @@ def vendors_to_xlsx_bytes(vendors):
     return buf.getvalue()
 
 
+def build_template_xlsx(ptype):
+    """상품군 유형(ptype)에 맞는 빈 양식 xlsx bytes를 만든다.
+    시트 구성:
+      - 채우기 시트: 헤더 · 설명 행 · 예시 행 · 빈 행 3개
+      - 안내 시트: 컬럼별 설명(조건부 필드는 언제 필요한지 명시)
+    편집 후 관리 콘솔의 '불러오기'로 올리면 그대로 저장됩니다."""
+    fields = CATEGORY_FIELD_SPECS.get(ptype, [])
+    if not fields:
+        raise ValueError(f"알 수 없는 상품군 유형: {ptype}")
+
+    columns = [ROW_MARK_COL] + [f["name"] for f in fields] + [DATA_COL]
+    # 헤더 아래 두 행: 설명, 예시. _행유형 마커로 실제 데이터와 구분한다.
+    help_row = {f["name"]: f.get("help", "") for f in fields}
+    help_row[DATA_COL] = "완전 저장을 원하면 이 열의 JSON만 채워도 됩니다"
+    help_row[ROW_MARK_COL] = "안내"
+    example_row = {f["name"]: f.get("example", "") for f in fields}
+    example_row[DATA_COL] = ""
+    example_row[ROW_MARK_COL] = "예시"
+
+    # 빈 행 3개 (실제 데이터 자리)
+    empty = [{c: "" for c in columns} for _ in range(3)]
+    df = pd.DataFrame([help_row, example_row] + empty, columns=columns)
+
+    # 안내 시트: 필드별 상세 설명
+    guide_rows = []
+    for f in fields:
+        guide_rows.append({
+            "필드명": f["name"],
+            "형식": f.get("type", "str"),
+            "예시": f.get("example", ""),
+            "언제 필요한가 · 값 규칙": f.get("help", ""),
+        })
+    guide_rows.append({
+        "필드명": DATA_COL, "형식": "json",
+        "예시": "{...}",
+        "언제 필요한가 · 값 규칙": (
+            "이 열에 앱 저장 형식 그대로의 JSON을 담으면 다른 열은 무시하고 그대로 저장합니다. "
+            "다른 열만 채우면 앱이 dict로 조합해서 저장합니다."
+        ),
+    })
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        cat_name = CATEGORY_TYPE_KOR.get(ptype, ptype)[:31]
+        df.to_excel(writer, sheet_name=cat_name, index=False)
+        pd.DataFrame(guide_rows).to_excel(writer, sheet_name="필드 안내", index=False)
+        # 시작 안내
+        readme = pd.DataFrame([{"안내": s} for s in [
+            f"이 파일은 [{CATEGORY_TYPE_KOR.get(ptype, ptype)}] 상품군 업체 등록 양식입니다.",
+            f"'{cat_name}' 시트에 업체 정보를 한 줄씩 채워 주세요.",
+            "헤더 다음 첫 행은 '컬럼 설명', 두 번째 행은 '예시 값'입니다. 그 아래 빈 행에 실제 값을 채우면 됩니다.",
+            "구조가 복잡한 필드(단가표, 후가공목록 등)는 _데이터_JSON 열에 앱 저장 형식 그대로 담아 주세요.",
+            "채운 뒤 관리 콘솔의 '엑셀로 업체 정보 백업 · 복원 > 불러오기'로 올리면 됩니다.",
+            "※ 불러오기는 관리자 잠금이 해제된 상태에서만 됩니다.",
+            "※ 불러오기는 현재 데이터를 완전히 대체하므로, 기존 업체를 유지하려면 먼저 '내보내기'로 받아 이어서 편집하세요.",
+        ]])
+        readme.to_excel(writer, sheet_name="시작 안내", index=False)
+        # 안내 시트를 맨 앞으로
+        wb = writer.book
+        order = ["시작 안내", cat_name, "필드 안내"]
+        wb._sheets = [wb[n] for n in order if n in wb.sheetnames]
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _coerce_field(f, raw):
+    """엑셀 셀 값을 필드 타입에 맞춰 변환한다."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() == "nan":
+        return None
+    t = f.get("type", "str")
+    try:
+        if t == "int":
+            return int(float(s))
+        if t == "float":
+            return float(s)
+        if t == "json":
+            # 리스트류: 쉼표 구분 문자열 또는 JSON 리터럴
+            if s.startswith(("[", "{")):
+                return json.loads(s)
+            # 예시/괄호 텍스트("(JSON에서 편집)")는 무시
+            if s.startswith("(") and s.endswith(")"):
+                return None
+            return [x.strip() for x in s.split(",") if x.strip()]
+    except Exception:
+        return None
+    return s
+
+
+def row_to_vendor(ptype, row):
+    """엑셀 한 행(dict)에서 요약 컬럼값만으로 vendor dict를 조합한다."""
+    if not isinstance(row, dict):
+        return None
+    fields = CATEGORY_FIELD_SPECS.get(ptype, [])
+    out = {}
+    for f in fields:
+        val = _coerce_field(f, row.get(f["name"]))
+        if val is not None:
+            out[f["name"]] = val
+    return out or None
+
+
+def _guess_ptype_from_sheet(sheet_name, df):
+    """양식 파일의 시트 이름/컬럼에서 상품군 유형을 추측한다."""
+    # 시트 이름이 카테고리 이름과 일치하면 그대로
+    ct = get_category_type(sheet_name) if sheet_name in st.session_state.vendors else None
+    if ct:
+        return ct
+    # 이름이 한글 라벨(스티커형/엽서형/…)과 일치하면 역매핑
+    for pt, label in CATEGORY_TYPE_KOR.items():
+        if sheet_name in (label, label[:31]):
+            return pt
+    # 컬럼 이름으로 판단
+    cols = set(df.columns)
+    if {"제공용지", "제공접착", "제공후지", "제공코팅"} & cols:
+        return "sticker"
+    if {"제공인쇄방식", "제공인쇄도수"} & cols and "제공용지" in cols:
+        return "postcard"
+    if {"제공타입", "제공가로", "제공포장"} & cols:
+        return "tape"
+    if {"사이즈목록", "수량구간", "색상옵션"} & cols:
+        return "size_matrix"
+    return None
+
+
+# 시작 안내/필드 안내처럼 실데이터가 없는 시트는 무시한다.
+IMPORT_META_SHEETS = {"__meta__", "시작 안내", "필드 안내"}
+
+
 def xlsx_bytes_to_vendors(data_bytes):
-    """엑셀 파일을 파싱해 vendors 사전을 만든다. JSON 컬럼만 신뢰한다."""
+    """엑셀 파일을 파싱해 vendors 사전을 만든다.
+    - `_데이터_JSON` 열이 있고 값이 있으면 그것을 우선 (완전 왕복)
+    - 없으면 개별 컬럼들에서 dict를 조합 (양식 파일 채우기 시나리오)
+    """
     xf = pd.ExcelFile(io.BytesIO(data_bytes), engine="openpyxl")
     out = {}
     errors = []
     for sheet in xf.sheet_names:
         df = xf.parse(sheet)
-        if DATA_COL not in df.columns:
-            errors.append(f"시트 [{sheet}]: '{DATA_COL}' 열이 없어 건너뜁니다.")
-            continue
         if sheet == "__meta__":
-            for raw in df[DATA_COL].dropna():
-                s = str(raw).strip()
-                if s:
-                    try:
-                        out[META_KEY] = json.loads(s)
-                    except Exception as e:
-                        errors.append(f"__meta__ JSON 파싱 실패: {e}")
-                    break
+            if DATA_COL in df.columns:
+                for raw in df[DATA_COL].dropna():
+                    s = str(raw).strip()
+                    if s and s.lower() != "nan":
+                        try:
+                            out[META_KEY] = json.loads(s)
+                        except Exception as e:
+                            errors.append(f"__meta__ JSON 파싱 실패: {e}")
+                        break
             continue
+        if sheet in IMPORT_META_SHEETS or "안내" in sheet:
+            continue
+
+        ptype = _guess_ptype_from_sheet(sheet, df)
         parsed = []
-        for i, raw in enumerate(df[DATA_COL], start=2):  # 엑셀 행 번호(헤더 포함)
-            if raw is None:
+        for i, row in enumerate(df.to_dict(orient="records"), start=2):
+            # 템플릿의 설명·예시 행은 마커로 걸러낸다.
+            mark = row.get(ROW_MARK_COL)
+            if mark is not None:
+                mstr = str(mark).strip()
+                if mstr and mstr.lower() != "nan":
+                    continue
+            # JSON 컬럼 우선. JSON답게 생긴 값만 시도해 설명 텍스트에서 헛경고가 나지 않게 한다.
+            raw = row.get(DATA_COL)
+            if raw is not None:
+                s = str(raw).strip()
+                if s and s.lower() != "nan" and s[:1] in "{[":
+                    try:
+                        obj = json.loads(s)
+                        if isinstance(obj, dict):
+                            parsed.append(obj)
+                            continue
+                        errors.append(f"시트 [{sheet}] 행 {i}: JSON이 dict가 아님")
+                    except Exception as e:
+                        errors.append(f"시트 [{sheet}] 행 {i}: JSON 파싱 실패 - {e}")
+                        continue
+
+            # JSON이 비었으면 개별 컬럼으로 조합. 상품군 유형이 있어야 가능.
+            if not ptype:
                 continue
-            s = str(raw).strip()
-            if not s or s == "nan":
-                continue
-            try:
-                obj = json.loads(s)
-                if isinstance(obj, dict):
-                    parsed.append(obj)
-                else:
-                    errors.append(f"시트 [{sheet}] 행 {i}: JSON이 dict가 아님")
-            except Exception as e:
-                errors.append(f"시트 [{sheet}] 행 {i}: JSON 파싱 실패 - {e}")
-        out[sheet] = parsed
+            obj = row_to_vendor(ptype, row)
+            if obj and obj.get("업체명"):
+                parsed.append(obj)
+            elif obj:
+                errors.append(f"시트 [{sheet}] 행 {i}: '업체명'이 없어 건너뜁니다")
+
+        # 컬럼에 예시/설명 행이 섞여 있으면 걸러낸다 (예시값의 첫 행 = 예시 업체명)
+        if parsed and ptype:
+            example_names = {f.get("example") for f in CATEGORY_FIELD_SPECS.get(ptype, [])
+                             if f.get("name") == "업체명"}
+            parsed = [v for v in parsed if v.get("업체명") not in example_names]
+
+        if parsed:
+            out[sheet] = parsed
     return out, errors
 
 
@@ -1060,6 +1375,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-08-12", "note": "엑셀 불러오기 옆에 '빈 양식 파일' 다운로드가 추가되었습니다. 상품군을 고르면 그에 맞는 컬럼과 조건 안내(예: '판가로는 과금방식=1판 자유 배치일 때만 필요')가 담긴 xlsx를 받아 채워 넣고 그대로 올리실 수 있습니다."},
     {"date": "2026-08-12", "note": "관리 콘솔에 엑셀(xlsx) 백업·복원 기능이 추가되었습니다. 현재 데이터 전체를 파일로 내려받거나, 편집한 파일을 올려 한 번에 반영할 수 있습니다. 복원은 관리자 잠금이 걸립니다."},
     {"date": "2026-07-21", "note": "아크릴 굿즈 등록에 인쇄방식·색상·코팅·추가옵션을 도입했습니다. 단가표는 (인쇄방식 × 사이즈 × 수량) 3축이 되고, 옵션은 이름·추가금·단위(개당/건당)로 자유롭게 등록·검색 시 자동 합산됩니다."},
     {"date": "2026-07-21", "note": "엽서 용지 평량(g)을 공용 마스터에서 업체별 자유 입력으로 이동 — 업체마다 취급 평량이 다르니 업체 등록 화면에서 쉼표로 구분해 적으시면 됩니다. 종류는 공용 목록 그대로."},
@@ -1280,22 +1596,51 @@ if st.session_state.page == "settings":
                 "마지막 `_데이터_JSON` 열에는 앱이 저장하는 형식 그대로 담깁니다. "
                 "다시 불러올 때는 `_데이터_JSON` 열만 사용해 어떤 스키마 변경에도 안전하게 왕복합니다."
             )
-            ex_col1, ex_col2 = st.columns(2)
-            with ex_col1:
-                st.markdown("**⬇️ 내보내기**")
+            st.markdown("**⬇️ 현재 데이터 내보내기**")
+            try:
+                xlsx = vendors_to_xlsx_bytes(st.session_state.vendors)
+                st.download_button(
+                    "현재 업체 데이터를 xlsx로 저장",
+                    data=xlsx,
+                    file_name=f"vendors_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(f"엑셀 생성 실패: {e}")
+
+            st.divider()
+
+            st.markdown("**🧾 빈 양식 파일 받기 (업체를 새로 추가할 때)**")
+            st.caption(
+                "상품군 유형을 고르면 그에 맞는 컬럼과 조건 안내가 담긴 xlsx를 받을 수 있습니다. "
+                "'예시' 행과 '필드 안내' 시트에 어느 필드가 언제 필요한지 적혀 있어, "
+                "그대로 채워서 아래 '불러오기'로 올리시면 됩니다."
+            )
+            tpl_col1, tpl_col2 = st.columns([2, 3])
+            with tpl_col1:
+                ptype_pick = st.selectbox(
+                    "상품군 유형",
+                    list(CATEGORY_TYPE_KOR.keys()),
+                    format_func=lambda k: CATEGORY_TYPE_KOR[k],
+                    key="tpl_ptype",
+                )
+            with tpl_col2:
                 try:
-                    xlsx = vendors_to_xlsx_bytes(st.session_state.vendors)
+                    tpl_bytes = build_template_xlsx(ptype_pick)
                     st.download_button(
-                        "현재 업체 데이터를 xlsx로 저장",
-                        data=xlsx,
-                        file_name=f"vendors_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        f"[{CATEGORY_TYPE_KOR[ptype_pick]}] 양식 xlsx 받기",
+                        data=tpl_bytes,
+                        file_name=f"vendor_template_{ptype_pick}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                     )
                 except Exception as e:
-                    st.error(f"엑셀 생성 실패: {e}")
+                    st.error(f"양식 생성 실패: {e}")
 
-            with ex_col2:
+            st.divider()
+
+            with st.container():
                 st.markdown("**⬆️ 불러오기**")
                 st.caption(
                     "업로드한 파일의 내용으로 **현재 업체 데이터를 완전히 대체**합니다. "
