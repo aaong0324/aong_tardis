@@ -434,132 +434,261 @@ CATEGORY_TYPE_KOR = {
 }
 
 
-def _vendor_summary(cat, v):
-    """엑셀 왼쪽에 놓을 사람이 훑기 좋은 요약."""
-    if not isinstance(v, dict):
-        return {}
-    row = {
-        "업체명": v.get("업체명", ""),
-        "상품명": v.get("상품명", ""),
-        "제작기간": v.get("제작기간", ""),
-        "빠른배송": v.get("빠른배송가능", ""),
-        "배송비": v.get("배송비", ""),
-        "무료배송액": v.get("무료배송액", ""),
-    }
-    if cat == "스티커":
-        row["단가규칙수"] = len(v.get("조합단가표", []))
-    elif cat == "엽서":
-        row["단가규칙수"] = len(v.get("조합단가표", []))
-        row["제공용지수"] = len(v.get("제공용지", []))
-    elif cat == "마스킹 테이프":
-        row["단가규칙수"] = len(v.get("조합단가표", []))
-    else:  # size_matrix 계열
-        row["단가줄수"] = len(v.get("사이즈단가표", []))
-        row["사이즈수"] = len(v.get("사이즈목록", []))
-        row["옵션수"] = sum(len(v.get(g, [])) for g in ("색상옵션", "코팅옵션", "추가옵션"))
-    return row
+# ── 세로형(필드=값) 엑셀 구조 ────────────────────────────────
+# 한 업체 = 한 시트. 옆으로 늘어선 표는 채우기 힘드니 위→아래로
+# '필드명 · 값 · 설명' 세 열로 눕힌다. 파서는 이 형태를 우선 인식하고
+# 예전에 만들던 표형 파일도 하위호환으로 계속 읽어준다.
+
+_SHEET_HEAD = ("카테고리", "상품군 유형")   # 시트 상단 메타 라벨
+_FIELD_HEADER = ("필드명", "값", "설명·조건")          # 필드 표 헤더
+
+
+def _safe_sheet_name(name, existing):
+    """엑셀 시트명 31자 제한 + 중복 방지."""
+    base = re.sub(r"[\\/*?:\[\]]", " ", str(name or "시트")).strip() or "시트"
+    base = base[:31]
+    if base not in existing:
+        return base
+    for n in range(2, 999):
+        cand = f"{base[:31 - len(str(n)) - 1]} {n}"
+        if cand not in existing:
+            return cand
+    return base
+
+
+def _stringify(value):
+    """리스트/딕셔너리는 사람이 보기 좋게 표현하고, 그 외는 문자열 그대로."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        # 문자열만 담긴 리스트는 쉼표 구분으로 보여준다.
+        if isinstance(value, list) and all(isinstance(x, (str, int, float)) for x in value):
+            return ", ".join(str(x) for x in value)
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _guess_vendor_ptype(cat, v):
+    """카테고리에서 상품군 유형을 얻고, 없으면 vendor dict의 필드로 추측."""
+    ct = None
+    try:
+        ct = get_category_type(cat)
+    except Exception:
+        pass
+    if ct:
+        return ct
+    keys = set(v.keys()) if isinstance(v, dict) else set()
+    if {"제공용지", "제공접착"} & keys:
+        return "sticker"
+    if {"제공인쇄방식", "제공인쇄도수"} & keys and "제공용지" in keys:
+        return "postcard"
+    if {"제공타입", "제공가로", "제공포장"} & keys:
+        return "tape"
+    if {"사이즈목록", "수량구간"} & keys:
+        return "size_matrix"
+    return None
+
+
+def _write_vertical_vendor_sheet(wb, sheet_name, cat, v, ptype):
+    """한 업체를 한 시트에 세로형으로 쓴다."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet(sheet_name)
+    head_fill = PatternFill("solid", fgColor="EEEEEE")
+    hdr_fill = PatternFill("solid", fgColor="F5F5F5")
+    bold = Font(bold=True)
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    # 메타 2줄 (카테고리·상품군 유형). 업체명은 아래 필드 표에서만 다룬다.
+    meta = [
+        ("카테고리", cat),
+        ("상품군 유형", f"{ptype or ''} ({CATEGORY_TYPE_KOR.get(ptype, '알 수 없음')})"),
+    ]
+    for i, (k, val) in enumerate(meta, start=1):
+        ws.cell(row=i, column=1, value=k).font = bold
+        ws.cell(row=i, column=1).fill = head_fill
+        ws.cell(row=i, column=2, value=val)
+
+    # 필드 표 헤더
+    header_row = 4
+    for j, h in enumerate(_FIELD_HEADER, start=1):
+        c = ws.cell(row=header_row, column=j, value=h)
+        c.font = bold
+        c.fill = hdr_fill
+
+    # 필드 목록
+    fields = CATEGORY_FIELD_SPECS.get(ptype, [])
+    r = header_row + 1
+    written = set()
+    v = v if isinstance(v, dict) else {}
+    for f in fields:
+        name = f["name"]
+        written.add(name)
+        ws.cell(row=r, column=1, value=name).font = bold
+        ws.cell(row=r, column=2, value=_stringify(v.get(name)))
+        help_bits = []
+        if f.get("help"):
+            help_bits.append(f["help"])
+        if f.get("example") and not v.get(name):
+            help_bits.append(f"예: {f['example']}")
+        ws.cell(row=r, column=3, value=" · ".join(help_bits)).alignment = wrap
+        r += 1
+
+    # 스펙에 없는 필드도 보존(스키마 확장 대응)
+    for k in v:
+        if k in written:
+            continue
+        ws.cell(row=r, column=1, value=k).font = bold
+        ws.cell(row=r, column=2, value=_stringify(v[k]))
+        ws.cell(row=r, column=3, value="(사용자 추가 필드)")
+        r += 1
+
+    # 마지막: 완전 왕복용 JSON
+    r += 1
+    ws.cell(row=r, column=1, value=DATA_COL).font = bold
+    ws.cell(row=r, column=2, value=json.dumps(v, ensure_ascii=False) if v else "")
+    ws.cell(row=r, column=3, value=(
+        "이 셀에 앱 저장 형식 그대로의 JSON이 있으면 다른 값보다 우선합니다. "
+        "비워두면 위 필드 값을 조합해서 저장합니다."
+    )).alignment = wrap
+
+    # 열 너비
+    for col, width in [(1, 22), (2, 55), (3, 60)]:
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+
+def _write_index_sheet(wb, entries):
+    """맨 앞 __목록__ 시트에 시트 명단과 상품군을 요약."""
+    from openpyxl.styles import Font
+    ws = wb.create_sheet("__목록__", 0)
+    ws.cell(row=1, column=1, value="시트 목록").font = Font(bold=True, size=13)
+    ws.cell(row=3, column=1, value="시트").font = Font(bold=True)
+    ws.cell(row=3, column=2, value="카테고리").font = Font(bold=True)
+    ws.cell(row=3, column=3, value="상품군 유형").font = Font(bold=True)
+    ws.cell(row=3, column=4, value="업체명").font = Font(bold=True)
+    for i, e in enumerate(entries, start=4):
+        ws.cell(row=i, column=1, value=e["sheet"])
+        ws.cell(row=i, column=2, value=e["cat"])
+        ws.cell(row=i, column=3, value=CATEGORY_TYPE_KOR.get(e["ptype"], e["ptype"] or ""))
+        ws.cell(row=i, column=4, value=e["name"])
+    from openpyxl.utils import get_column_letter
+    for col, w in [(1, 34), (2, 18), (3, 30), (4, 30)]:
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+
+def _write_readme_sheet(wb, lines, title="시작 안내"):
+    from openpyxl.styles import Font, Alignment
+    ws = wb.create_sheet(title)
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
+    for i, s in enumerate(lines, start=3):
+        c = ws.cell(row=i, column=1, value=s)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+    from openpyxl.utils import get_column_letter
+    ws.column_dimensions[get_column_letter(1)].width = 100
+    # 맨 앞에 놓기
+    wb._sheets.remove(ws)
+    wb._sheets.insert(0, ws)
+
+
+def _write_meta_sheet(wb, meta):
+    from openpyxl.styles import Font
+    ws = wb.create_sheet("__meta__")
+    ws.cell(row=1, column=1, value="필드").font = Font(bold=True)
+    ws.cell(row=1, column=2, value="값").font = Font(bold=True)
+    ws.cell(row=2, column=1, value=DATA_COL)
+    ws.cell(row=2, column=2, value=json.dumps(meta or {}, ensure_ascii=False))
 
 
 def vendors_to_xlsx_bytes(vendors):
-    """업체 데이터를 여러 시트로 엑셀 파일로 만든다. 반환은 bytes."""
+    """모든 업체를 세로형으로 담은 xlsx bytes."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    # 기본으로 만들어진 빈 시트 제거
+    default = wb.active
+    wb.remove(default)
+
+    entries = []
+    seq = 0
+    for cat, vs in vendors.items():
+        if cat == META_KEY:
+            continue
+        if not vs:
+            # 등록된 업체가 없어도 카테고리가 남도록 안내 시트 하나
+            seq += 1
+            name = _safe_sheet_name(f"{seq:02d}. {cat} (업체 없음)", {s.title for s in wb.worksheets})
+            ws = wb.create_sheet(name)
+            ws["A1"] = f"카테고리: {cat}"
+            ws["A2"] = "(등록된 업체가 없습니다)"
+            entries.append({"sheet": name, "cat": cat, "ptype": _guess_vendor_ptype(cat, {}), "name": ""})
+            continue
+        for v in vs:
+            seq += 1
+            ptype = _guess_vendor_ptype(cat, v)
+            vname = (v or {}).get("업체명", "이름없음") if isinstance(v, dict) else "이름없음"
+            base = f"{seq:02d}. {cat}_{vname}"
+            name = _safe_sheet_name(base, {s.title for s in wb.worksheets})
+            _write_vertical_vendor_sheet(wb, name, cat, v, ptype)
+            entries.append({"sheet": name, "cat": cat, "ptype": ptype, "name": vname})
+
+    _write_meta_sheet(wb, vendors.get(META_KEY))
+    _write_index_sheet(wb, entries)
+    _write_readme_sheet(wb, [
+        "이 파일은 등록된 모든 업체 정보를 세로형(필드=값)으로 담은 백업/편집용 xlsx입니다.",
+        "각 시트가 업체 하나입니다. B열의 값을 편집하시고, 다 되면 관리 콘솔의 '엑셀로 업체 정보 백업 · 복원 > 불러오기'로 올리시면 됩니다.",
+        "리스트류(제공용지, 제공인쇄방식 등)는 쉼표로 구분해 나열합니다. 예: '일반아트지, 크라프트지'",
+        "구조가 복잡한 필드(조합단가표, 후가공목록, 사이즈단가표, 색상옵션 등)는 시트 아래쪽의 _데이터_JSON 값 셀에서 편집합니다.",
+        "_데이터_JSON 값이 있으면 위쪽 개별 필드보다 우선하여 그대로 저장됩니다. 이 셀을 비우면 위쪽 필드 값을 조합해 저장합니다.",
+        "새 업체를 추가하려면 시트를 복사해 '01. 스티커_새업체명' 같은 이름으로 붙이시고 B열을 채우세요.",
+        "※ 불러오기는 현재 데이터를 완전히 대체합니다. 기존 업체는 이 파일에 남겨두세요.",
+    ])
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # 상품군별 워크시트
-        for cat in vendors:
-            if cat == META_KEY:
-                continue
-            rows = []
-            for v in vendors.get(cat) or []:
-                summary = _vendor_summary(cat, v)
-                summary[DATA_COL] = json.dumps(v, ensure_ascii=False)
-                rows.append(summary)
-            if not rows:
-                # 빈 상품군도 시트를 남겨 카테고리 존재를 보존한다.
-                rows = [{"업체명": "(등록된 업체 없음)", DATA_COL: ""}]
-            df = pd.DataFrame(rows)
-            # 엑셀 시트명 31자 제한 대응
-            sheet = cat[:31] or "시트"
-            df.to_excel(writer, sheet_name=sheet, index=False)
-        # 메타는 별도 시트에 통째로 JSON 한 줄
-        meta = vendors.get(META_KEY)
-        if isinstance(meta, dict):
-            pd.DataFrame([{DATA_COL: json.dumps(meta, ensure_ascii=False)}]).to_excel(
-                writer, sheet_name="__meta__", index=False,
-            )
+    wb.save(buf)
     buf.seek(0)
     return buf.getvalue()
 
 
 def build_template_xlsx(ptype):
-    """상품군 유형(ptype)에 맞는 빈 양식 xlsx bytes를 만든다.
-    시트 구성:
-      - 채우기 시트: 헤더 · 설명 행 · 예시 행 · 빈 행 3개
-      - 안내 시트: 컬럼별 설명(조건부 필드는 언제 필요한지 명시)
-    편집 후 관리 콘솔의 '불러오기'로 올리면 그대로 저장됩니다."""
-    fields = CATEGORY_FIELD_SPECS.get(ptype, [])
+    """상품군 유형에 맞는 빈 양식 xlsx bytes를 만든다. 세로형 시트 하나 + 안내."""
+    import openpyxl
+    fields = CATEGORY_FIELD_SPECS.get(ptype)
     if not fields:
         raise ValueError(f"알 수 없는 상품군 유형: {ptype}")
 
-    columns = [ROW_MARK_COL] + [f["name"] for f in fields] + [DATA_COL]
-    # 헤더 아래 두 행: 설명, 예시. _행유형 마커로 실제 데이터와 구분한다.
-    help_row = {f["name"]: f.get("help", "") for f in fields}
-    help_row[DATA_COL] = "완전 저장을 원하면 이 열의 JSON만 채워도 됩니다"
-    help_row[ROW_MARK_COL] = "안내"
-    example_row = {f["name"]: f.get("example", "") for f in fields}
-    example_row[DATA_COL] = ""
-    example_row[ROW_MARK_COL] = "예시"
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
 
-    # 빈 행 3개 (실제 데이터 자리)
-    empty = [{c: "" for c in columns} for _ in range(3)]
-    df = pd.DataFrame([help_row, example_row] + empty, columns=columns)
+    # 빈 업체 시트
+    label = CATEGORY_TYPE_KOR.get(ptype, ptype)
+    default_cat = {"sticker": "스티커", "postcard": "엽서",
+                   "tape": "마스킹 테이프", "size_matrix": "아크릴 키링"}.get(ptype, "")
+    sheet_name = _safe_sheet_name(f"새 업체 ({label})", set())
+    _write_vertical_vendor_sheet(wb, sheet_name, default_cat, {}, ptype)
 
-    # 안내 시트: 필드별 상세 설명
-    guide_rows = []
-    for f in fields:
-        guide_rows.append({
-            "필드명": f["name"],
-            "형식": f.get("type", "str"),
-            "예시": f.get("example", ""),
-            "언제 필요한가 · 값 규칙": f.get("help", ""),
-        })
-    guide_rows.append({
-        "필드명": DATA_COL, "형식": "json",
-        "예시": "{...}",
-        "언제 필요한가 · 값 규칙": (
-            "이 열에 앱 저장 형식 그대로의 JSON을 담으면 다른 열은 무시하고 그대로 저장합니다. "
-            "다른 열만 채우면 앱이 dict로 조합해서 저장합니다."
-        ),
-    })
-
+    _write_readme_sheet(wb, [
+        f"이 파일은 [{label}] 상품군에 업체를 새로 추가할 때 채워 넣는 빈 양식입니다.",
+        f"'{sheet_name}' 시트로 이동해 B열(값)을 채우시면 됩니다.",
+        "카테고리 셀(A1 옆 B1)에 그 업체가 속할 상품군 이름을 적어주세요. 예: 스티커, 엽서, 아크릴 키링",
+        "각 필드 오른쪽에 있는 '설명·조건' 열에 언제 그 값이 필요한지 안내가 있습니다.",
+        "리스트류 필드는 쉼표로 구분해 나열합니다. 예: '일반아트지, 크라프트지'",
+        "구조가 복잡한 필드(조합단가표, 사이즈단가표, 색상옵션 등)는 시트 아래쪽 _데이터_JSON 값에 JSON으로 담으세요. 앱에서 한 번 등록한 뒤 '내보내기'로 받아보시면 실제 형식을 확인할 수 있습니다.",
+        "여러 업체를 한 번에 등록하려면 이 시트를 복사해 여러 개 만드시고 각각 채우세요.",
+        "다 채우신 뒤 관리 콘솔의 '엑셀로 업체 정보 백업 · 복원 > 불러오기'로 올리시면 됩니다.",
+        "※ 불러오기는 현재 데이터를 완전히 대체합니다. 기존 업체를 유지하려면 먼저 '내보내기'로 받아 새 업체 시트를 이어 붙여 올리세요.",
+    ])
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        cat_name = CATEGORY_TYPE_KOR.get(ptype, ptype)[:31]
-        df.to_excel(writer, sheet_name=cat_name, index=False)
-        pd.DataFrame(guide_rows).to_excel(writer, sheet_name="필드 안내", index=False)
-        # 시작 안내
-        readme = pd.DataFrame([{"안내": s} for s in [
-            f"이 파일은 [{CATEGORY_TYPE_KOR.get(ptype, ptype)}] 상품군 업체 등록 양식입니다.",
-            f"'{cat_name}' 시트에 업체 정보를 한 줄씩 채워 주세요.",
-            "헤더 다음 첫 행은 '컬럼 설명', 두 번째 행은 '예시 값'입니다. 그 아래 빈 행에 실제 값을 채우면 됩니다.",
-            "구조가 복잡한 필드(단가표, 후가공목록 등)는 _데이터_JSON 열에 앱 저장 형식 그대로 담아 주세요.",
-            "채운 뒤 관리 콘솔의 '엑셀로 업체 정보 백업 · 복원 > 불러오기'로 올리면 됩니다.",
-            "※ 불러오기는 관리자 잠금이 해제된 상태에서만 됩니다.",
-            "※ 불러오기는 현재 데이터를 완전히 대체하므로, 기존 업체를 유지하려면 먼저 '내보내기'로 받아 이어서 편집하세요.",
-        ]])
-        readme.to_excel(writer, sheet_name="시작 안내", index=False)
-        # 안내 시트를 맨 앞으로
-        wb = writer.book
-        order = ["시작 안내", cat_name, "필드 안내"]
-        wb._sheets = [wb[n] for n in order if n in wb.sheetnames]
+    wb.save(buf)
     buf.seek(0)
     return buf.getvalue()
 
 
+# ── 파서 ─────────────────────────────────────────────────────
 def _coerce_field(f, raw):
-    """엑셀 셀 값을 필드 타입에 맞춰 변환한다."""
+    """셀 값을 필드 타입에 맞춰 변환."""
     if raw is None:
         return None
-    s = str(raw).strip()
+    s = raw if isinstance(raw, str) else str(raw)
+    s = s.strip()
     if not s or s.lower() == "nan":
         return None
     t = f.get("type", "str")
@@ -569,123 +698,149 @@ def _coerce_field(f, raw):
         if t == "float":
             return float(s)
         if t == "json":
-            # 리스트류: 쉼표 구분 문자열 또는 JSON 리터럴
-            if s.startswith(("[", "{")):
+            if s.startswith(("{", "[")):
                 return json.loads(s)
-            # 예시/괄호 텍스트("(JSON에서 편집)")는 무시
             if s.startswith("(") and s.endswith(")"):
-                return None
+                return None   # "(JSON에서 편집)" 같은 안내 문구는 무시
             return [x.strip() for x in s.split(",") if x.strip()]
     except Exception:
         return None
     return s
 
 
-def row_to_vendor(ptype, row):
-    """엑셀 한 행(dict)에서 요약 컬럼값만으로 vendor dict를 조합한다."""
-    if not isinstance(row, dict):
+def _parse_vertical_sheet(ws):
+    """세로형 시트를 (cat, ptype, vendor_dict)로 파싱한다.
+    파일이 세로형이 아니면 None을 돌려준다."""
+    # 앞 6행 안에서 라벨을 찾는다.
+    cat = ptype = None
+    for r in range(1, 7):
+        a = ws.cell(row=r, column=1).value
+        b = ws.cell(row=r, column=2).value
+        if not a:
+            continue
+        la = str(a).strip()
+        if la == "카테고리" and b:
+            cat = str(b).strip()
+        elif la == "상품군 유형" and b:
+            # 'sticker (스티커형)' 또는 '스티커형' 둘 다 대응
+            raw = str(b).strip()
+            for pt in CATEGORY_FIELD_SPECS:
+                if raw.startswith(pt) or raw == CATEGORY_TYPE_KOR.get(pt) or raw.startswith(CATEGORY_TYPE_KOR.get(pt, "")):
+                    ptype = pt
+                    break
+    if cat is None and ptype is None:
         return None
-    fields = CATEGORY_FIELD_SPECS.get(ptype, [])
-    out = {}
-    for f in fields:
-        val = _coerce_field(f, row.get(f["name"]))
-        if val is not None:
-            out[f["name"]] = val
-    return out or None
+
+    # 필드 헤더 위치 찾기
+    header_row = None
+    for r in range(1, 12):
+        if ws.cell(row=r, column=1).value == _FIELD_HEADER[0]:
+            header_row = r
+            break
+    if header_row is None:
+        return None
+
+    # 필드 이름 → 스펙 매핑 (타입 변환용)
+    spec_by_name = {f["name"]: f for f in CATEGORY_FIELD_SPECS.get(ptype, [])}
+
+    vendor = {}
+    data_json_val = None
+    for r in range(header_row + 1, ws.max_row + 1):
+        name = ws.cell(row=r, column=1).value
+        val = ws.cell(row=r, column=2).value
+        if not name:
+            continue
+        nm = str(name).strip()
+        if nm == DATA_COL:
+            data_json_val = val
+            continue
+        f = spec_by_name.get(nm, {"type": "str", "name": nm})
+        coerced = _coerce_field(f, val)
+        if coerced is not None:
+            vendor[nm] = coerced
+
+    # JSON이 있으면 그것 우선
+    if data_json_val is not None:
+        s = str(data_json_val).strip()
+        if s and s.lower() != "nan" and s.startswith("{"):
+            try:
+                obj = json.loads(s)
+                if isinstance(obj, dict):
+                    vendor = obj
+            except Exception:
+                pass
+
+    # 업체명 없으면 실제 데이터로 취급 안 함
+    if not vendor.get("업체명"):
+        return None
+    return (cat, ptype, vendor)
 
 
-def _guess_ptype_from_sheet(sheet_name, df):
-    """양식 파일의 시트 이름/컬럼에서 상품군 유형을 추측한다."""
-    # 시트 이름이 카테고리 이름과 일치하면 그대로
-    ct = get_category_type(sheet_name) if sheet_name in st.session_state.vendors else None
-    if ct:
-        return ct
-    # 이름이 한글 라벨(스티커형/엽서형/…)과 일치하면 역매핑
-    for pt, label in CATEGORY_TYPE_KOR.items():
-        if sheet_name in (label, label[:31]):
-            return pt
-    # 컬럼 이름으로 판단
-    cols = set(df.columns)
-    if {"제공용지", "제공접착", "제공후지", "제공코팅"} & cols:
-        return "sticker"
-    if {"제공인쇄방식", "제공인쇄도수"} & cols and "제공용지" in cols:
-        return "postcard"
-    if {"제공타입", "제공가로", "제공포장"} & cols:
-        return "tape"
-    if {"사이즈목록", "수량구간", "색상옵션"} & cols:
-        return "size_matrix"
+def _parse_meta_sheet(ws):
+    """__meta__ 시트에서 저장된 메타 dict를 돌려준다."""
+    for r in range(1, min(ws.max_row + 1, 20)):
+        a = ws.cell(row=r, column=1).value
+        b = ws.cell(row=r, column=2).value
+        if a and str(a).strip() == DATA_COL and b:
+            try:
+                return json.loads(str(b))
+            except Exception:
+                return None
     return None
 
 
-# 시작 안내/필드 안내처럼 실데이터가 없는 시트는 무시한다.
-IMPORT_META_SHEETS = {"__meta__", "시작 안내", "필드 안내"}
-
-
 def xlsx_bytes_to_vendors(data_bytes):
-    """엑셀 파일을 파싱해 vendors 사전을 만든다.
-    - `_데이터_JSON` 열이 있고 값이 있으면 그것을 우선 (완전 왕복)
-    - 없으면 개별 컬럼들에서 dict를 조합 (양식 파일 채우기 시나리오)
-    """
-    xf = pd.ExcelFile(io.BytesIO(data_bytes), engine="openpyxl")
+    """xlsx를 파싱해 vendors 사전을 만든다. 세로형(신) 우선, 표형(구)도 지원."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data_bytes), data_only=True)
+
     out = {}
     errors = []
-    for sheet in xf.sheet_names:
-        df = xf.parse(sheet)
-        if sheet == "__meta__":
-            if DATA_COL in df.columns:
-                for raw in df[DATA_COL].dropna():
-                    s = str(raw).strip()
-                    if s and s.lower() != "nan":
-                        try:
-                            out[META_KEY] = json.loads(s)
-                        except Exception as e:
-                            errors.append(f"__meta__ JSON 파싱 실패: {e}")
-                        break
+
+    for ws in wb.worksheets:
+        name = ws.title
+        if name in ("__목록__", "시작 안내", "필드 안내") or name.startswith("__index"):
             continue
-        if sheet in IMPORT_META_SHEETS or "안내" in sheet:
+        if name == "__meta__":
+            meta = _parse_meta_sheet(ws)
+            if isinstance(meta, dict):
+                out[META_KEY] = meta
             continue
 
-        ptype = _guess_ptype_from_sheet(sheet, df)
-        parsed = []
-        for i, row in enumerate(df.to_dict(orient="records"), start=2):
-            # 템플릿의 설명·예시 행은 마커로 걸러낸다.
-            mark = row.get(ROW_MARK_COL)
-            if mark is not None:
-                mstr = str(mark).strip()
-                if mstr and mstr.lower() != "nan":
-                    continue
-            # JSON 컬럼 우선. JSON답게 생긴 값만 시도해 설명 텍스트에서 헛경고가 나지 않게 한다.
-            raw = row.get(DATA_COL)
-            if raw is not None:
-                s = str(raw).strip()
-                if s and s.lower() != "nan" and s[:1] in "{[":
-                    try:
-                        obj = json.loads(s)
-                        if isinstance(obj, dict):
-                            parsed.append(obj)
-                            continue
-                        errors.append(f"시트 [{sheet}] 행 {i}: JSON이 dict가 아님")
-                    except Exception as e:
-                        errors.append(f"시트 [{sheet}] 행 {i}: JSON 파싱 실패 - {e}")
-                        continue
-
-            # JSON이 비었으면 개별 컬럼으로 조합. 상품군 유형이 있어야 가능.
-            if not ptype:
-                continue
-            obj = row_to_vendor(ptype, row)
-            if obj and obj.get("업체명"):
-                parsed.append(obj)
-            elif obj:
-                errors.append(f"시트 [{sheet}] 행 {i}: '업체명'이 없어 건너뜁니다")
-
-        # 컬럼에 예시/설명 행이 섞여 있으면 걸러낸다 (예시값의 첫 행 = 예시 업체명)
-        if parsed and ptype:
-            example_names = {f.get("example") for f in CATEGORY_FIELD_SPECS.get(ptype, [])
-                             if f.get("name") == "업체명"}
-            parsed = [v for v in parsed if v.get("업체명") not in example_names]
+        # 세로형 시도
+        try:
+            parsed = _parse_vertical_sheet(ws)
+        except Exception as e:
+            errors.append(f"시트 [{name}] 파싱 오류: {e}")
+            parsed = None
 
         if parsed:
-            out[sheet] = parsed
+            cat, _pt, vendor = parsed
+            if not cat:
+                cat = name  # 최후 수단
+            out.setdefault(cat, []).append(vendor)
+            continue
+
+        # 하위호환: 옛 표형 파일 (JSON 컬럼 위주)
+        try:
+            df = pd.read_excel(io.BytesIO(data_bytes), sheet_name=name, engine="openpyxl")
+        except Exception:
+            continue
+        if DATA_COL not in df.columns:
+            continue
+        for i, raw in enumerate(df[DATA_COL], start=2):
+            if raw is None:
+                continue
+            s = str(raw).strip()
+            if not s or s.lower() == "nan" or s[:1] not in "{[":
+                continue
+            try:
+                obj = json.loads(s)
+                if isinstance(obj, dict) and obj.get("업체명"):
+                    out.setdefault(name, []).append(obj)
+            except Exception as e:
+                errors.append(f"시트 [{name}] 행 {i}: JSON 파싱 실패 - {e}")
+
     return out, errors
 
 
@@ -1375,6 +1530,7 @@ DEFAULT_CONFIG = {
 
 # 업데이트 노트 — 새 변경사항은 위쪽(리스트 맨 앞)에 추가한다.
 UPDATE_NOTES = [
+    {"date": "2026-08-14", "note": "엑셀 내보내기와 빈 양식이 세로형(필드=값)으로 재구성되었습니다. 한 업체 = 한 시트, 위→아래로 필드명·값·설명이 정렬돼 옆으로 스크롤하지 않고 값만 채우실 수 있습니다."},
     {"date": "2026-08-12", "note": "엑셀 불러오기 옆에 '빈 양식 파일' 다운로드가 추가되었습니다. 상품군을 고르면 그에 맞는 컬럼과 조건 안내(예: '판가로는 과금방식=1판 자유 배치일 때만 필요')가 담긴 xlsx를 받아 채워 넣고 그대로 올리실 수 있습니다."},
     {"date": "2026-08-12", "note": "관리 콘솔에 엑셀(xlsx) 백업·복원 기능이 추가되었습니다. 현재 데이터 전체를 파일로 내려받거나, 편집한 파일을 올려 한 번에 반영할 수 있습니다. 복원은 관리자 잠금이 걸립니다."},
     {"date": "2026-07-21", "note": "아크릴 굿즈 등록에 인쇄방식·색상·코팅·추가옵션을 도입했습니다. 단가표는 (인쇄방식 × 사이즈 × 수량) 3축이 되고, 옵션은 이름·추가금·단위(개당/건당)로 자유롭게 등록·검색 시 자동 합산됩니다."},
@@ -1592,9 +1748,10 @@ if st.session_state.page == "settings":
 
         with st.expander("📥 엑셀로 업체 정보 백업 · 복원", expanded=False):
             st.caption(
-                "상품군마다 워크시트 하나가 만들어지고, 앞쪽에는 업체명·배송비 같은 요약이, "
-                "마지막 `_데이터_JSON` 열에는 앱이 저장하는 형식 그대로 담깁니다. "
-                "다시 불러올 때는 `_데이터_JSON` 열만 사용해 어떤 스키마 변경에도 안전하게 왕복합니다."
+                "한 업체가 시트 하나로 저장됩니다. 각 시트는 필드명·값·설명이 위→아래로 정렬된 "
+                "세로형 폼이라 옆으로 스크롤하지 않고 값만 채우시면 됩니다. "
+                "시트 아래쪽의 `_데이터_JSON` 값이 있으면 그것을 우선하여 왕복하고, "
+                "비워두시면 위쪽 필드 값들을 조합해서 저장합니다."
             )
             st.markdown("**⬇️ 현재 데이터 내보내기**")
             try:
@@ -1613,9 +1770,9 @@ if st.session_state.page == "settings":
 
             st.markdown("**🧾 빈 양식 파일 받기 (업체를 새로 추가할 때)**")
             st.caption(
-                "상품군 유형을 고르면 그에 맞는 컬럼과 조건 안내가 담긴 xlsx를 받을 수 있습니다. "
-                "'예시' 행과 '필드 안내' 시트에 어느 필드가 언제 필요한지 적혀 있어, "
-                "그대로 채워서 아래 '불러오기'로 올리시면 됩니다."
+                "상품군 유형을 고르면 그에 맞는 세로형 시트가 든 xlsx를 받으실 수 있습니다. "
+                "각 필드 오른쪽에 '언제 필요한지' 안내가 붙어 있어, B열 값만 채우시면 됩니다. "
+                "여러 업체를 한 번에 등록하시려면 시트를 복사해 여러 개 만드시면 됩니다."
             )
             tpl_col1, tpl_col2 = st.columns([2, 3])
             with tpl_col1:
